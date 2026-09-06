@@ -1,0 +1,12 @@
+{
+  "id": "linuxhwinfo",
+  "name": "LinuxHwInfo",
+  "version": "1.0.0",
+  "sdkVersion": "1.21",
+  "entryAssembly": "LoupixDeck.Plugin.LinuxHwInfo.dll",
+  "platform": "Linux",
+  "author": "RadiatorTwo",
+  "description": "Display live Linux hardware sensor readings (hwmon, /proc, NVIDIA NVML) on touch buttons",
+  "projectUrl": "",
+  "iconFile": ""
+}

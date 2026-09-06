@@ -1,0 +1,10 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+dist/
+
+# Local-only files, not part of the plugin distribution.
+CLAUDE.md
+release.sh

@@ -1,16 +1,19 @@
 using LoupixDeck.Plugin.LinuxHwInfo.Rendering;
-using LoupixDeck.Plugin.LinuxHwInfo.Sensors;
+using LoupixDeck.Plugin.LinuxHwInfo.Rendering.Pixel;
+using LoupixDeck.Plugin.LinuxHwInfo.Rendering.Tiles;
+using LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
 using LoupixDeck.PluginSdk;
 
 namespace LoupixDeck.Plugin.LinuxHwInfo;
 
 /// <summary>
-/// Display command that renders Linux sensor readings onto a touch button (90×90) via the SDK
-/// image-rendering API. One command carries one sensor; a button's command sequence composes the tile
-/// dynamically — the first (rendering) command reads <see cref="CommandContext.SequenceCommands"/> and draws
-/// one row per sibling command, up to four.
+/// Display command that renders Linux sensor readings onto a touch button as pixel tiles (5×7
+/// bitmap font, no anti-aliasing). One command carries one sensor; a button's command sequence
+/// composes the tile dynamically — the first (rendering) command reads
+/// <see cref="CommandContext.SequenceCommands"/> and draws one row per sibling command, up to four.
+/// The command name and the "Sensor" parameter are unchanged, so saved buttons keep working.
 /// </summary>
-internal sealed class LinuxHwInfoSensorCommand(LinuxHwInfoService service) : IDisplayImageCommand
+internal sealed class LinuxHwInfoSensorCommand(TelemetrySampler telemetry) : IAnimatedDisplayCommand, IDisplayImageCommand
 {
     public const string Name = "LinuxHwInfo.Sensor";
 
@@ -29,22 +32,32 @@ internal sealed class LinuxHwInfoSensorCommand(LinuxHwInfoService service) : IDi
 
     public ButtonTargets SupportedTargets => ButtonTargets.TouchButton;
 
-    public TimeSpan UpdateInterval => TimeSpan.FromSeconds(2);
+    public int TargetFps => PixelTile.TargetFps;
+
+    public TimeSpan UpdateInterval => TimeSpan.FromMilliseconds(500);
+
+    public AnimationFrameInfo RenderAnimatedFrame(CommandContext ctx, IRenderCanvas canvas, AnimationFrameContext frame) =>
+        PixelTile.Render(ctx, canvas, surface => Draw(ctx, surface, TileDrawing.BlinkOn(frame.Elapsed)));
 
     public bool RenderImage(CommandContext ctx, IRenderCanvas canvas)
     {
-        bool transparent = ctx.Host.Settings.Get(LinuxHwInfoPlugin.TransparentBackgroundKey, false);
+        PixelTile.Render(ctx, canvas, surface => Draw(ctx, surface, PixelTile.WallClockBlink()));
+        return true;
+    }
 
-        List<SensorReading> readings = [];
+    private void Draw(CommandContext ctx, PixelSurface surface, bool blinkOn)
+    {
+        TelemetryFrame frame = telemetry.Frame;
+
+        List<SensorRow> rows = [];
         foreach (string? sensorRef in SensorReferences(ctx))
         {
-            readings.Add(LinuxReadingBuilder.Build(sensorRef, service.Sensors, service.IsAvailable));
-            if (readings.Count >= SensorRenderer.MaxReadings)
+            rows.Add(LinuxReadingBuilder.Build(sensorRef, frame.Sensors));
+            if (rows.Count >= SensorTileLayout.MaxRows)
                 break;
         }
 
-        SensorRenderer.Render(canvas, readings, transparent ? SensorTheme.Transparent : SensorTheme.Default);
-        return true;
+        SensorTileLayout.Draw(surface, rows, frame, blinkOn);
     }
 
     /// <summary>

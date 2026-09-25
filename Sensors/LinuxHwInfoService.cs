@@ -120,18 +120,18 @@ public sealed class LinuxHwInfoService : IDisposable
         }
     }
 
-    /// <summary>Short human-readable state for the settings page's status action.</summary>
-    public string Diagnostics
+    /// <summary>Short human-readable state for the settings page's status action. <paramref name="tr"/>
+    /// translates the English text; the NVML status is technical and stays as the driver reports it.</summary>
+    public string Diagnostics(Func<string, string> tr)
     {
-        get
-        {
-            IReadOnlyList<LinuxHwInfoSensor> sensors = _sensors;
-            string age = _lastPollUtc == default
-                ? "never polled"
-                : $"last poll {(DateTime.UtcNow - _lastPollUtc).TotalSeconds.ToString("F0", CultureInfo.InvariantCulture)}s ago";
+        IReadOnlyList<LinuxHwInfoSensor> sensors = _sensors;
+        string age = _lastPollUtc == default
+            ? tr("never polled")
+            : string.Format(tr("last poll {0}s ago"),
+                (DateTime.UtcNow - _lastPollUtc).TotalSeconds.ToString("F0", CultureInfo.InvariantCulture));
 
-            return $"{sensors.Count} sensor(s) from {_hwmon.ChipCount} hwmon chip(s) — NVML: {_nvml.Status} — {age}";
-        }
+        return string.Format(tr("{0} sensor(s) from {1} hwmon chip(s) — NVML: {2} — {3}"),
+            sensors.Count, _hwmon.ChipCount, _nvml.Status, age);
     }
 
     public void Dispose() => Stop();

@@ -140,8 +140,7 @@ internal static class PageMetrics
 
     /// <summary>
     /// The readings of one GPU, so the page never mixes two cards: the first NVIDIA card, else the
-    /// first other GPU. A GPU's readings share their id up to the last '/' (NVML by UUID, amdgpu by
-    /// PCI address — hwmon and DRM alike).
+    /// first other GPU (see <see cref="SensorMetrics.DeviceKey"/>).
     /// </summary>
     private static IEnumerable<LinuxHwInfoSensor> Gpu(IReadOnlyList<LinuxHwInfoSensor> sensors)
     {
@@ -150,14 +149,8 @@ internal static class PageMetrics
         if (anchor is null)
             return [];
 
-        string device = DevicePrefix(anchor.Id);
-        return sensors.Where(s => s.Category == Categories.Gpu && DevicePrefix(s.Id) == device);
-    }
-
-    private static string DevicePrefix(string id)
-    {
-        int slash = id.LastIndexOf('/');
-        return slash < 0 ? id : id[..slash];
+        string device = SensorMetrics.DeviceKey(anchor);
+        return sensors.Where(s => s.Category == Categories.Gpu && SensorMetrics.DeviceKey(s) == device);
     }
 
     /// <summary>The GPU fan in RPM where the driver reports it (amdgpu), else NVML's duty cycle.</summary>

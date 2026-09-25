@@ -81,6 +81,17 @@ internal static class SensorMetrics
                 && sensor.Label.Equals("edge", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
+    /// Which physical device a reading belongs to: its id up to the last '/'. A GPU's readings share
+    /// it — NVML by UUID, amdgpu by PCI address for hwmon and DRM alike — even when two cards have the
+    /// same name.
+    /// </summary>
+    public static string DeviceKey(LinuxHwInfoSensor sensor)
+    {
+        int slash = sensor.Id.LastIndexOf('/');
+        return slash < 0 ? sensor.Id : sensor.Id[..slash];
+    }
+
+    /// <summary>
     /// A drive's main temperature: hwmon channel temp1, which is NVMe's "Composite" — the value the
     /// drive's own warning limits refer to — and drivetemp's only channel. NVMe "Sensor 1/2"
     /// (controller, flash) routinely run 10–20 °C hotter within spec.

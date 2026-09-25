@@ -87,20 +87,23 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         IReadOnlyList<LinuxHwInfoSensor> sensors = service.Sensors;
         double tj = tjMax();
 
-        List<(string Key, double Value, MetricInfo Info)> inputs = [];
+        List<(string Key, double Value, MetricInfo Info, LinuxHwInfoSensor? Sensor)> inputs = [];
         foreach (LinuxHwInfoSensor sensor in sensors)
-            inputs.Add((MetricKeys.ForSensor(sensor), SensorMetrics.NativeValue(sensor), SensorMetrics.Describe(sensor, tj)));
+            inputs.Add((MetricKeys.ForSensor(sensor), SensorMetrics.NativeValue(sensor), SensorMetrics.Describe(sensor, tj), sensor));
 
         PageMetrics.Context context = new(sensors, tj, NetworkRoutes.Preferred(PageMetrics.Interfaces(sensors)));
         foreach (PageMetrics.Definition definition in PageMetrics.All)
         {
             if (definition.Read(context) is { } reading)
-                inputs.Add((definition.Id, reading.Value, reading.Info));
+                inputs.Add((definition.Id, reading.Value, reading.Info, null));
         }
+
+        Dictionary<string, string> gpuTemperatures = GpuTemperatures(sensors);
 
         // Fan rules read the temperature state they watch, so temperatures go first.
         Dictionary<string, MetricSnapshot> metrics = [];
-        foreach ((string key, double value, MetricInfo info) in inputs.OrderBy(i => IsFanRule(i.Info.Threshold)))
+        foreach ((string key, double value, MetricInfo info, LinuxHwInfoSensor? sensor) in
+                 inputs.OrderBy(i => IsFanRule(i.Info.Threshold)))
         {
             if (!_tracks.TryGetValue(key, out Track? track))
                 _tracks[key] = track = new Track();
@@ -113,7 +116,11 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
             MetricState companion = info.Threshold switch
             {
                 ThresholdKind.CpuFanStall => metrics.GetValueOrDefault(PageMetrics.CpuTemp)?.State ?? MetricState.Ok,
-                ThresholdKind.GpuFanStall => metrics.GetValueOrDefault(PageMetrics.GpuTemp)?.State ?? MetricState.Ok,
+                // A card's own fan watches that card's temperature; the page's fan the page's GPU.
+                ThresholdKind.GpuFanStall => metrics.GetValueOrDefault(
+                    sensor is not null && gpuTemperatures.TryGetValue(SensorMetrics.DeviceKey(sensor), out string? temperature)
+                        ? temperature
+                        : PageMetrics.GpuTemp)?.State ?? MetricState.Ok,
                 _ => MetricState.Ok
             };
             track.State = Thresholds.Evaluate(info.Threshold, smoothed, tj, track.State, companion);
@@ -137,6 +144,24 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         }
 
         return new TelemetryFrame(true, sensors, metrics);
+    }
+
+    /// <summary>Per GPU (by <see cref="SensorMetrics.DeviceKey"/>) the id of its core temperature,
+    /// or of its first temperature when it reports no core reading.</summary>
+    private static Dictionary<string, string> GpuTemperatures(IReadOnlyList<LinuxHwInfoSensor> sensors)
+    {
+        Dictionary<string, string> temperatures = [];
+        foreach (LinuxHwInfoSensor sensor in sensors)
+        {
+            if (sensor.Category != Categories.Gpu || sensor.Type != LinuxHwInfoReadingType.Temperature)
+                continue;
+
+            string device = SensorMetrics.DeviceKey(sensor);
+            if (SensorMetrics.IsGpuCoreTemperature(sensor) || !temperatures.ContainsKey(device))
+                temperatures[device] = sensor.Id;
+        }
+
+        return temperatures;
     }
 
     private static bool IsFanRule(ThresholdKind kind) =>

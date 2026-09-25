@@ -33,7 +33,7 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     {
         Id = "linuxhwinfo",
         Name = "LinuxHwInfo",
-        Version = new Version(1, 0, 0),
+        Version = new Version(1, 1, 0),
         SdkVersion = new Version(1, 26, 0),
         Author = "RadiatorTwo",
         Description = "Display live Linux hardware sensor readings (hwmon, /proc, NVIDIA NVML) on touch buttons"

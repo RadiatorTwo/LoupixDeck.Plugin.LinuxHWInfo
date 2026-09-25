@@ -193,13 +193,26 @@ internal static partial class SensorMenu
         List<string> baseNames = ordered.Select(e => e.BaseName).ToList();
 
         // Readings labelled identically within one unit get a running number: "Fan 1", "Fan 2".
+        // A number another entry already carries is skipped ("Pump", "Pump", "Pump 1" → "Pump 2",
+        // "Pump 3", "Pump 1").
+        HashSet<string> taken = new(Enumerable.Range(0, ordered.Count).Select(i => Compose(baseNames[i], tags[i])),
+            StringComparer.OrdinalIgnoreCase);
         foreach (IGrouping<string, int> clash in Enumerable.Range(0, ordered.Count)
                      .GroupBy(i => Compose(baseNames[i], tags[i]), StringComparer.OrdinalIgnoreCase)
-                     .Where(g => g.Count() > 1))
+                     .Where(g => g.Count() > 1)
+                     .ToList())
         {
             int number = 1;
             foreach (int i in clash)
-                baseNames[i] = $"{ordered[i].BaseName} {number++}";
+            {
+                string numbered;
+                do
+                    numbered = $"{ordered[i].BaseName} {number++}";
+                while (taken.Contains(Compose(numbered, tags[i])));
+
+                baseNames[i] = numbered;
+                taken.Add(Compose(numbered, tags[i]));
+            }
         }
 
         List<string> names = Enumerable.Range(0, ordered.Count).Select(i => Compose(baseNames[i], tags[i])).ToList();

@@ -183,6 +183,8 @@ internal static partial class TileLabels
         entry = Whitespace().Replace(entry.Replace('(', ' ').Replace(")", ""), " ").Replace(" ,", ",").Trim();
 
         // "DIMM 1 temp1" → "DIMM 1": the hwmon channel name adds nothing once a device is named.
+        // The menu's last-resort "#temp2" is replaced by the tile's own numbering.
+        entry = ChannelSuffix().Replace(entry, "");
         string withoutChannel = Whitespace().Replace(HwmonChannel().Replace(entry, ""), " ").Trim();
         if (withoutChannel.Any(char.IsLetter))
             entry = withoutChannel;
@@ -283,15 +285,29 @@ internal static partial class TileLabels
     }
 
     /// <summary>Appends a running number to labels that collide among readings of the same unit.</summary>
+    /// <remarks>A number another label already carries is skipped, so the result is unique.</remarks>
     private static void Number(List<string> labels, List<SensorName> named)
     {
+        HashSet<(string, string)> taken = Enumerable.Range(0, labels.Count)
+            .Select(i => (labels[i].ToUpperInvariant(), named[i].Sensor.Unit))
+            .ToHashSet();
+
         foreach (IGrouping<(string, string), int> clash in Enumerable.Range(0, labels.Count)
                      .GroupBy(i => (labels[i].ToUpperInvariant(), named[i].Sensor.Unit))
-                     .Where(g => g.Count() > 1))
+                     .Where(g => g.Count() > 1)
+                     .ToList())
         {
             int number = 1;
             foreach (int i in clash)
-                labels[i] = $"{labels[i]} {number++}";
+            {
+                string numbered;
+                do
+                    numbered = $"{labels[i]} {number++}";
+                while (taken.Contains((numbered.ToUpperInvariant(), named[i].Sensor.Unit)));
+
+                labels[i] = numbered;
+                taken.Add((numbered.ToUpperInvariant(), named[i].Sensor.Unit));
+            }
         }
     }
 
@@ -332,6 +348,9 @@ internal static partial class TileLabels
     /// <summary>hwmon's own channel names ("temp1", "fan2") that unlabelled channels carry.</summary>
     [GeneratedRegex(@"\b(?:temp|fan|in|power|curr)\d+\b")]
     private static partial Regex HwmonChannel();
+
+    [GeneratedRegex(@"\s+#\S+$")]
+    private static partial Regex ChannelSuffix();
 
     /// <summary>The namespace of an NVMe block device ("nvme0n1" → "nvme0").</summary>
     [GeneratedRegex(@"(?<=^nvme\d+)n\d+$")]

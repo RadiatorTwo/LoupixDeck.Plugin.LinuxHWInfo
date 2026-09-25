@@ -44,9 +44,14 @@ internal static class PageMetrics
 
     public static IReadOnlyList<Definition> All { get; } =
     [
-        // The hottest CPU reading is Tctl/Tdie on AMD and the package on Intel.
-        new(CpuTemp, c => Of(MaxBy(c.Sensors, s => s.Category == Categories.Cpu
-                                                   && s.Type == LinuxHwInfoReadingType.Temperature),
+        // k10temp reports Tdie only where Tctl carries an offset (Ryzen 1000/2000 X, Threadripper:
+        // +10 to +27 °C), so Tdie is the real die temperature there. Otherwise the hottest CPU
+        // reading: Tctl on AMD, the package on Intel.
+        new(CpuTemp, c => Of(First(c.Sensors, s => s.Category == Categories.Cpu
+                                                   && s.Type == LinuxHwInfoReadingType.Temperature
+                                                   && s.Label.Equals("Tdie", StringComparison.OrdinalIgnoreCase))
+                             ?? MaxBy(c.Sensors, s => s.Category == Categories.Cpu
+                                                      && s.Type == LinuxHwInfoReadingType.Temperature),
             new MetricInfo(MetricFormat.Temperature, 30, c.TjMax, ThresholdKind.CpuTemperature))),
         new(CpuClock, c => Of(ById(c.Sensors, SensorId.Proc("cpu", "freq.max"))
                               ?? MaxBy(c.Sensors, s => s.Category == Categories.Cpu

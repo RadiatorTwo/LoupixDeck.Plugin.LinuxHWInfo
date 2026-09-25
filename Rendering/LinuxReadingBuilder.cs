@@ -5,7 +5,7 @@ namespace LoupixDeck.Plugin.LinuxHwInfo.Rendering;
 
 /// <summary>
 /// Turns a persisted <c>LinuxHwInfo.Sensor</c> command parameter into the <see cref="SensorRow"/> a
-/// tile draws. Owns the parameter grammar and the labels; values, units, history and alert state
+/// tile draws. Owns the parameter grammar and picks the labels; values, units, history and alert state
 /// come from the <see cref="TelemetrySampler"/>, which tracks every sensor under the same id the
 /// parameter stores.
 /// <para>
@@ -38,6 +38,10 @@ internal static class LinuxReadingBuilder
 
         if (sensor is null)
             return Placeholder(HeaderFromId(id));
+
+        // The menu's name for the sensor; the source label is only the fallback.
+        if (TileLabels.For(sensors, id) is { } labels)
+            return new SensorRow(labels.Header, labels.Short, MetricKeys.ForSensor(sensor));
 
         return new SensorRow(sensor.Label, ShortHeaderFrom(sensor.Label), MetricKeys.ForSensor(sensor));
     }

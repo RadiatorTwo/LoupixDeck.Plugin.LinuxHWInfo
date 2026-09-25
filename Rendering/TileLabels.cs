@@ -97,7 +97,7 @@ internal static partial class TileLabels
                 compact = Abbreviate(entry);
 
             headers.Add(PixelFont.Measure(header) > HeaderRoom ? compact : header);
-            shorts.Add(Shorten(Join(tag, Aggregate().Replace(Abbreviate(entry), "$1")), tag.Length > 0));
+            shorts.Add(ShortLabel(tag, entry, name, context));
         }
 
         Number(headers, named);
@@ -224,6 +224,25 @@ internal static partial class TileLabels
     /// few letters instead of the tail being lost: "Vorne Unten" → "Vor Unte", "Mem-Modul 3" →
     /// "Mem-Mo 3". Never touches the component tag or trailing digits.
     /// </summary>
+    /// <summary>
+    /// The row label. An interface or block device name ("enp5s0", "nvme0") is never cut — "enp50"
+    /// would read like another interface — so where it and the tag do not both fit, the tag goes.
+    /// </summary>
+    private static string ShortLabel(string tag, string entry, SensorName name, Context context)
+    {
+        string abbreviated = Aggregate().Replace(Abbreviate(entry), "$1");
+        bool deviceWord = (name.Sensor.Source == SensorSourceKind.Network && context.Interfaces > 1)
+                          || (name.Sensor.Source == SensorSourceKind.Disk && context.Disks > 1);
+
+        string label = Join(tag, abbreviated);
+        if (!deviceWord)
+            return Shorten(label, tag.Length > 0);
+
+        return label.Length > ShortBudget ? Shorten(abbreviated, hasTag: true) : label;
+    }
+
+    /// <param name="hasTag">Leaves the first word untouched: the component tag, or the device name
+    /// of a rate.</param>
     private static string Shorten(string label, bool hasTag)
     {
         List<string> words = label.Split(' ').ToList();

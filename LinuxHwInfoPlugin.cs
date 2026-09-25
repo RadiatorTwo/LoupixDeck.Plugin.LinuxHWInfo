@@ -70,9 +70,8 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     // ── Dynamic menu ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds the sensor picker: category → device → reading. Nothing is filtered out — every channel the
-    /// kernel exposes is offered, including implausible ones, because only the user can tell which of a
-    /// board's Super-I/O channels are actually wired up.
+    /// Builds the menu: the paging tiles, then every sensor sorted by component and quantity (one
+    /// command each; chain several on a button for a multi-row tile). See <see cref="SensorMenu"/>.
     /// </summary>
     public Task<IReadOnlyList<MenuNode>> GetMenuNodes(ButtonTargets target)
     {
@@ -83,35 +82,11 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         if (sensors.Count == 0)
             return Task.FromResult<IReadOnlyList<MenuNode>>([]);
 
-        List<MenuNode> categories = [new MenuNode { Name = "Pages", Children = PageNodes() }];
-        foreach (string category in Categories.Order)
-        {
-            List<MenuNode> devices = [];
-
-            foreach (IGrouping<string, LinuxHwInfoSensor> device in sensors
-                         .Where(s => s.Category == category)
-                         .GroupBy(s => s.Group)
-                         .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
-            {
-                List<MenuNode> readings = device
-                    .OrderBy(s => s.Label, StringComparer.OrdinalIgnoreCase)
-                    .Select(s => new MenuNode
-                    {
-                        Name = s.Label,
-                        CommandName = LinuxHwInfoSensorCommand.Name,
-                        Parameters = new Dictionary<string, string> { { "Sensor", s.Id } }
-                    })
-                    .ToList();
-
-                devices.Add(new MenuNode { Name = device.Key, Children = readings });
-            }
-
-            if (devices.Count > 0)
-                categories.Add(new MenuNode { Name = category, Children = devices });
-        }
+        List<MenuNode> children = [new MenuNode { Name = "Pages", Children = PageNodes() }];
+        children.AddRange(SensorMenu.Build(sensors));
 
         return Task.FromResult<IReadOnlyList<MenuNode>>(
-            [new MenuNode { Name = "LinuxHwInfo", Children = categories }]);
+            [new MenuNode { Name = "LinuxHwInfo", Children = children }]);
     }
 
     /// <summary>The paging tile (every page, press for the next) and one fixed tile per page.</summary>

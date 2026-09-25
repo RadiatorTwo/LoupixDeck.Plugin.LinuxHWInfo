@@ -2,7 +2,7 @@
   "id": "linuxhwinfo",
   "name": "LinuxHwInfo",
   "version": "1.0.0",
-  "sdkVersion": "1.21",
+  "sdkVersion": "1.26",
   "entryAssembly": "LoupixDeck.Plugin.LinuxHwInfo.dll",
   "platform": "Linux",
   "author": "RadiatorTwo",

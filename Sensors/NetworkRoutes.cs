@@ -12,6 +12,9 @@ internal static class NetworkRoutes
     private const string RouteTable = "/proc/net/route";
     private const string NetClassRoot = "/sys/class/net";
 
+    /// <summary>RTF_UP in the route's flags.</summary>
+    private const int RouteUp = 0x1;
+
     /// <summary>
     /// Of <paramref name="interfaces"/>: the default-route interface; without one, the first
     /// physical interface (one backed by a device — not a bridge, veth or tunnel); else the first.
@@ -46,6 +49,12 @@ internal static class NetworkRoutes
             return null;
         }
 
+        return DefaultInterface(lines);
+    }
+
+    /// <summary>The default-route interface in the lines of <c>/proc/net/route</c>, header included.</summary>
+    public static string? DefaultInterface(IEnumerable<string> lines)
+    {
         string? best = null;
         long bestMetric = long.MaxValue;
         foreach (string line in lines.Skip(1))
@@ -53,6 +62,11 @@ internal static class NetworkRoutes
             // Iface Destination Gateway Flags RefCnt Use Metric Mask ...
             string[] fields = line.Split((char[])['\t', ' '], StringSplitOptions.RemoveEmptyEntries);
             if (fields.Length < 8 || fields[1] != "00000000" || fields[7] != "00000000")
+                continue;
+
+            // A route that is not up (RTF_UP clear) carries no traffic.
+            if (!int.TryParse(fields[3], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int flags)
+                || (flags & RouteUp) == 0)
                 continue;
 
             if (!long.TryParse(fields[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out long metric))

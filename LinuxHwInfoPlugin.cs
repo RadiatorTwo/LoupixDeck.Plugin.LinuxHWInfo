@@ -1,3 +1,4 @@
+using LoupixDeck.Plugin.LinuxHwInfo.Rendering.Tiles;
 using LoupixDeck.Plugin.LinuxHwInfo.Sensors;
 using LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
 using LoupixDeck.PluginSdk;
@@ -47,7 +48,7 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         };
 
         _telemetry = new TelemetrySampler(_service, ReadTjMax, host.Logger);
-        _commands = [new LinuxHwInfoSensorCommand(_telemetry)];
+        _commands = [new LinuxHwInfoSensorCommand(_telemetry), new LinuxHwInfoPagesCommand(_telemetry)];
         _telemetry.Start();
         _service.Start();
     }
@@ -82,7 +83,7 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         if (sensors.Count == 0)
             return Task.FromResult<IReadOnlyList<MenuNode>>([]);
 
-        List<MenuNode> categories = [];
+        List<MenuNode> categories = [new MenuNode { Name = "Pages", Children = PageNodes() }];
         foreach (string category in Categories.Order)
         {
             List<MenuNode> devices = [];
@@ -112,6 +113,25 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         return Task.FromResult<IReadOnlyList<MenuNode>>(
             [new MenuNode { Name = "LinuxHwInfo", Children = categories }]);
     }
+
+    /// <summary>The paging tile (every page, press for the next) and one fixed tile per page.</summary>
+    private static List<MenuNode> PageNodes() =>
+    [
+        PagesNode("All pages (press to cycle)", ComponentPages.DefaultSelection),
+        PagesNode("CPU page", ComponentPages.Cpu.Id),
+        PagesNode("GPU page", ComponentPages.Gpu.Id),
+        PagesNode("RAM page", ComponentPages.Ram.Id),
+        PagesNode("Network page", ComponentPages.Net.Id),
+        PagesNode("Disk page", ComponentPages.Disk.Id),
+        PagesNode("CPU summary", ComponentPages.Summary.Id)
+    ];
+
+    private static MenuNode PagesNode(string name, string pages) => new()
+    {
+        Name = name,
+        CommandName = LinuxHwInfoPagesCommand.CommandName,
+        Parameters = new Dictionary<string, string> { { "Pages", pages } }
+    };
 
     // ── Settings page ──────────────────────────────────────────────────────────
 
@@ -163,8 +183,10 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         if (_service != null)
             _service.IntervalSeconds = ReadPollInterval(_host);
 
-        // Repaint immediately rather than waiting for the next poll tick.
+        // Tiles redraw several times a second and pick up the new settings on their own; this
+        // only covers a host that drives them through the slower poll path.
         _host.RequestButtonRefresh(LinuxHwInfoSensorCommand.Name);
+        _host.RequestButtonRefresh(LinuxHwInfoPagesCommand.CommandName);
     }
 
     /// <summary>Number settings come back as <c>long</c> from the JSON store.</summary>

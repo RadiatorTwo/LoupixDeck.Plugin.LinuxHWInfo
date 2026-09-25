@@ -146,9 +146,23 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         new PluginSettingAction
         {
             Label = "Show Status",
-            Invoke = () => Task.FromResult(_service?.Diagnostics ?? "not initialized")
+            Invoke = () => Task.FromResult(_service?.Diagnostics(Tr) ?? Tr("not initialized"))
         }
     ];
+
+    /// <summary>Translates runtime text through the plugin's strings files; hosts before SDK 1.24
+    /// have no <see cref="IPluginHost.Tr"/> and get the English text.</summary>
+    private string Tr(string english)
+    {
+        try
+        {
+            return _host?.Tr(english) ?? english;
+        }
+        catch (MissingMethodException)
+        {
+            return english;
+        }
+    }
 
     public void OnSettingsSaved()
     {

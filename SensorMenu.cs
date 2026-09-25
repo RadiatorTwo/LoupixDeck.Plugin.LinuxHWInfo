@@ -22,7 +22,7 @@ internal static partial class SensorMenu
     /// <summary>Quantities in menu order. "Fans" is the mainboard's plural of "Fan".</summary>
     private static readonly string[] SectionOrder =
     [
-        "Temperature", "Load", "Clock", "Memory", "Fan", "Fans", "Power", "Voltage", "Current", "Transfer rate", "Other"
+        "Temperature", "Load", "Clock", "Memory", "Video memory", "Fan", "Fans", "Power", "Voltage", "Current", "Transfer rate", "Other"
     ];
 
     /// <summary>Words that repeat the component and are dropped from the labels ("CPU Total"
@@ -132,8 +132,9 @@ internal static partial class SensorMenu
     /// <summary>The quantity submenu of a sensor, from its reading type and id.</summary>
     private static string Section(LinuxHwInfoSensor sensor)
     {
+        // Not "Memory": that is also the component of the system RAM, and translations differ.
         if (SensorMetrics.IsVram(sensor))
-            return "Memory";
+            return "Video memory";
         if (SensorMetrics.IsGpuFanPercent(sensor))
             return "Fan";
 

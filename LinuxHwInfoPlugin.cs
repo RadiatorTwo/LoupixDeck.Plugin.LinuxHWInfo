@@ -1,11 +1,13 @@
 using LoupixDeck.Plugin.LinuxHwInfo.Sensors;
+using LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
 using LoupixDeck.PluginSdk;
 
 namespace LoupixDeck.Plugin.LinuxHwInfo;
 
 /// <summary>
 /// Reads hardware sensors straight from the Linux kernel interfaces — <c>/sys/class/hwmon</c>,
-/// <c>/proc</c> and, for NVIDIA cards, NVML — and renders them as live tiles on touch buttons.
+/// <c>/proc</c> and, for NVIDIA cards, NVML — samples them into histories and alert states, and renders
+/// them as pixel tiles on touch buttons.
 /// The Linux counterpart to the HWiNFO and Argus Monitor plugins.
 /// </summary>
 public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginSettingsPage
@@ -13,9 +15,15 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     public const string TransparentBackgroundKey = "background.transparent";
     public const string PollIntervalKey = "poll.intervalSeconds";
 
+    /// <summary>Settings key: the CPU's maximum junction temperature in °C. CPU warn/critical
+    /// limits are TjMax − 15 / TjMax − 5; hwmon does not report TjMax reliably.</summary>
+    public const string CpuTjMaxKey = "thresholds.cpuTjMax";
+
     private const int DefaultPollIntervalSeconds = 2;
+    private const long DefaultTjMax = 100;
 
     private LinuxHwInfoService? _service;
+    private TelemetrySampler? _telemetry;
     private List<IPluginCommand> _commands = [];
     private IPluginHost? _host;
     private IReadOnlyList<PluginSettingAction>? _settingsActions;
@@ -38,11 +46,23 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
             IntervalSeconds = ReadPollInterval(host)
         };
 
-        _commands = [new LinuxHwInfoSensorCommand(_service)];
+        _telemetry = new TelemetrySampler(_service, ReadTjMax, host.Logger);
+        _commands = [new LinuxHwInfoSensorCommand(_telemetry)];
+        _telemetry.Start();
         _service.Start();
     }
 
-    public override void Shutdown() => _service?.Stop();
+    public override void Shutdown()
+    {
+        _telemetry?.Stop();
+        _service?.Stop();
+    }
+
+    private double ReadTjMax()
+    {
+        long tjMax = _host?.Settings.Get(CpuTjMaxKey, DefaultTjMax) ?? DefaultTjMax;
+        return Math.Clamp(tjMax, 60, 125);
+    }
 
     public override IEnumerable<IPluginCommand> GetCommands() => _commands;
 
@@ -103,7 +123,8 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
             Label = "Transparent background",
             Kind = PluginSettingKind.Toggle,
             DefaultValue = false,
-            Description = "Draw sensor tiles without an opaque background so the page wallpaper shows through."
+            Description = "Draw sensor tiles without an opaque background so the page wallpaper shows through. " +
+                          "Text gets a 1-pixel shadow for legibility."
         },
         new PluginSettingDescriptor
         {
@@ -112,6 +133,16 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
             Kind = PluginSettingKind.Number,
             DefaultValue = DefaultPollIntervalSeconds,
             Description = "How often sensors are read. Clamped to 1–60 seconds."
+        },
+        new PluginSettingDescriptor
+        {
+            Key = CpuTjMaxKey,
+            Label = "CPU TjMax (°C)",
+            Kind = PluginSettingKind.Number,
+            DefaultValue = DefaultTjMax,
+            Description = "Maximum junction temperature of your CPU, from the vendor's spec sheet " +
+                          "(typically 95 for AMD Ryzen, 100–105 for Intel). CPU temperature turns amber " +
+                          "at TjMax − 15 and red at TjMax − 5."
         }
     ];
 

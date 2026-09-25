@@ -128,7 +128,7 @@ internal static partial class TileLabels
         /// <summary>The GPUs, in menu order.</summary>
         public List<string> Gpus { get; } = named
             .Where(n => n.Component == "GPU")
-            .Select(n => n.Sensor.Group)
+            .Select(n => n.Device)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
@@ -174,8 +174,8 @@ internal static partial class TileLabels
         // far too long for a tile: number the cards instead ("GPU 2 Temp").
         if (name.Component == "GPU" && context.Gpus.Count > 1)
         {
-            if (entry.StartsWith(sensor.Group, StringComparison.OrdinalIgnoreCase))
-                entry = entry[sensor.Group.Length..].Trim();
+            if (entry.StartsWith(name.Device, StringComparison.OrdinalIgnoreCase))
+                entry = entry[name.Device.Length..].Trim();
 
             entry = GpuNumber(name, context) + (entry.Length == 0 ? name.Section : entry);
         }
@@ -204,7 +204,7 @@ internal static partial class TileLabels
 
     /// <summary>"2 " for the second of several GPUs, empty on a one-GPU machine.</summary>
     private static string GpuNumber(SensorName name, Context context) =>
-        context.Gpus.Count > 1 ? $"{context.Gpus.IndexOf(name.Sensor.Group) + 1} " : string.Empty;
+        context.Gpus.Count > 1 ? $"{context.Gpus.IndexOf(name.Device) + 1} " : string.Empty;
 
     private static string Abbreviate(string entry)
     {

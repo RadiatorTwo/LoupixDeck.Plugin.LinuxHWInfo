@@ -45,7 +45,7 @@ internal static partial class SensorMenu
         ["Fan"] = ["Fan"]
     };
 
-    private sealed record Entry(LinuxHwInfoSensor Sensor, int Rank, string BaseName);
+    private sealed record Entry(LinuxHwInfoSensor Sensor, string Device, int Rank, string BaseName);
 
     public static List<MenuNode> Build(IReadOnlyList<LinuxHwInfoSensor> sensors)
     {
@@ -86,6 +86,7 @@ internal static partial class SensorMenu
     /// </summary>
     public static List<SensorName> Name(IReadOnlyList<LinuxHwInfoSensor> sensors)
     {
+        Dictionary<LinuxHwInfoSensor, string> devices = DeviceNames(sensors);
         Dictionary<(string Component, string Section), List<LinuxHwInfoSensor>> bySection = [];
         foreach (LinuxHwInfoSensor sensor in sensors)
         {
@@ -106,7 +107,7 @@ internal static partial class SensorMenu
 
             foreach (((_, string section), List<LinuxHwInfoSensor> members) in sections)
             {
-                List<SensorName> names = SectionNames(component, section, members);
+                List<SensorName> names = SectionNames(component, section, members, devices);
 
                 // A submenu with one entry is noise: the entry takes the submenu's place and name
                 // (unless it is the component's only quantity, which gets no submenu either).
@@ -158,15 +159,16 @@ internal static partial class SensorMenu
         return rank >= 0 ? rank : int.MaxValue;
     }
 
-    private static List<SensorName> SectionNames(string component, string section, List<LinuxHwInfoSensor> members)
+    private static List<SensorName> SectionNames(string component, string section, List<LinuxHwInfoSensor> members,
+        Dictionary<LinuxHwInfoSensor, string> devices)
     {
         // Which device a reading belongs to only needs saying when the section spans several.
-        bool severalDevices = members.Select(s => s.Group).Distinct(StringComparer.Ordinal).Count() > 1;
+        bool severalDevices = members.Select(s => devices[s]).Distinct(StringComparer.Ordinal).Count() > 1;
 
         List<Entry> ordered = members
-            .Select(s => new Entry(s, Rank(s), BaseName(s, component, section, severalDevices)))
+            .Select(s => new Entry(s, devices[s], Rank(s), BaseName(s, component, section, severalDevices)))
             .OrderBy(e => e.Rank)
-            .ThenBy(e => e.Sensor.Group, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => e.Device, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => NaturalKey(e.BaseName), StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -174,7 +176,7 @@ internal static partial class SensorMenu
         // and so does every reading of a machine with two GPUs, whose labels rarely say which card.
         if (severalDevices && (component == "GPU"
                                || ordered.GroupBy(e => e.BaseName, StringComparer.OrdinalIgnoreCase)
-                                   .Any(g => g.Select(e => e.Sensor.Group).Distinct(StringComparer.Ordinal).Count() > 1)))
+                                   .Any(g => g.Select(e => e.Device).Distinct(StringComparer.Ordinal).Count() > 1)))
         {
             ordered = ordered.Select(e => e with { BaseName = WithDevice(e, section) }).ToList();
         }
@@ -216,7 +218,7 @@ internal static partial class SensorMenu
         }
 
         return Enumerable.Range(0, ordered.Count)
-            .Select(i => new SensorName(ordered[i].Sensor, component, section, baseNames[i], names[i]))
+            .Select(i => new SensorName(ordered[i].Sensor, ordered[i].Device, component, section, baseNames[i], names[i]))
             .ToList();
     }
 
@@ -298,12 +300,41 @@ internal static partial class SensorMenu
     /// is only the quantity ("Temperature" under Temperature) becomes the device name.</summary>
     private static string WithDevice(Entry entry, string section)
     {
-        string group = entry.Sensor.Group;
+        string device = entry.Device;
         if (entry.Sensor.Source is SensorSourceKind.Network or SensorSourceKind.Disk
-            || entry.BaseName.StartsWith(group, StringComparison.OrdinalIgnoreCase))
+            || entry.BaseName.StartsWith(device, StringComparison.OrdinalIgnoreCase))
             return entry.BaseName;
 
-        return entry.BaseName == section ? group : $"{group} {entry.BaseName}";
+        return entry.BaseName == section ? device : $"{device} {entry.BaseName}";
+    }
+
+    /// <summary>
+    /// The device name of every sensor: its group, except for GPUs that share one — every AMD card
+    /// is "GPU", two NVIDIA cards of one model have the same name. Those are told apart by
+    /// <see cref="SensorMetrics.DeviceKey"/> and numbered in snapshot order ("GPU 1", "GPU 2").
+    /// </summary>
+    private static Dictionary<LinuxHwInfoSensor, string> DeviceNames(IReadOnlyList<LinuxHwInfoSensor> sensors)
+    {
+        Dictionary<string, List<string>> keysByGroup = [];
+        foreach (LinuxHwInfoSensor sensor in sensors.Where(s => s.Category == Categories.Gpu))
+        {
+            if (!keysByGroup.TryGetValue(sensor.Group, out List<string>? keys))
+                keysByGroup[sensor.Group] = keys = [];
+
+            string key = SensorMetrics.DeviceKey(sensor);
+            if (!keys.Contains(key))
+                keys.Add(key);
+        }
+
+        Dictionary<LinuxHwInfoSensor, string> names = [];
+        foreach (LinuxHwInfoSensor sensor in sensors)
+        {
+            names[sensor] = sensor.Category == Categories.Gpu && keysByGroup[sensor.Group] is { Count: > 1 } keys
+                ? $"{sensor.Group} {keys.IndexOf(SensorMetrics.DeviceKey(sensor)) + 1}"
+                : sensor.Group;
+        }
+
+        return names;
     }
 
     /// <summary>A segment of an id counted from the end: 0 is the channel ("temp1"), 1 the one
@@ -328,6 +359,7 @@ internal static partial class SensorMenu
 /// How the menu names a sensor. <paramref name="Name"/> is the entry name without the unit that
 /// sets it apart from its neighbours ("Used"); <paramref name="MenuName"/> is what the menu shows
 /// ("Used (%)", or the quantity's name when the entry replaces a one-entry submenu).
+/// <paramref name="Device"/> is the name of the device the reading belongs to, unique per device.
 /// </summary>
-internal sealed record SensorName(LinuxHwInfoSensor Sensor, string Component, string Section, string Name,
-    string MenuName);
+internal sealed record SensorName(LinuxHwInfoSensor Sensor, string Device, string Component, string Section,
+    string Name, string MenuName);

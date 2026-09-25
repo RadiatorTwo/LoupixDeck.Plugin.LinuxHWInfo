@@ -31,25 +31,30 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
 
     public void Start()
     {
-        if (_started)
-            return;
+        lock (_gate)
+        {
+            if (_started)
+                return;
 
-        _started = true;
+            _started = true;
+        }
+
         service.SnapshotUpdated += Sample;
     }
 
     public void Stop()
     {
-        if (!_started)
-            return;
-
-        _started = false;
-        service.SnapshotUpdated -= Sample;
         lock (_gate)
         {
+            if (!_started)
+                return;
+
+            _started = false;
             _tracks.Clear();
             _frame = TelemetryFrame.Unavailable;
         }
+
+        service.SnapshotUpdated -= Sample;
     }
 
     public void Dispose() => Stop();
@@ -59,7 +64,11 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         try
         {
             lock (_gate)
-                _frame = BuildFrame();
+            {
+                // The poll thread may still run a handler list captured before Stop unsubscribed.
+                if (_started)
+                    _frame = BuildFrame();
+            }
         }
         catch (Exception ex)
         {

@@ -82,7 +82,7 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         foreach (LinuxHwInfoSensor sensor in sensors)
             inputs.Add((MetricKeys.ForSensor(sensor), SensorMetrics.NativeValue(sensor), SensorMetrics.Describe(sensor, tj)));
 
-        PageMetrics.Context context = new(sensors, tj, NetworkRoutes.DefaultInterface());
+        PageMetrics.Context context = new(sensors, tj, NetworkRoutes.Preferred(PageMetrics.Interfaces(sensors)));
         foreach (PageMetrics.Definition definition in PageMetrics.All)
         {
             if (definition.Read(context) is { } reading)

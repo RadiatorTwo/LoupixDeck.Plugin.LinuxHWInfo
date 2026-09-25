@@ -27,9 +27,16 @@ internal static class PageMetrics
     public const string DiskRead = "disk.read";
     public const string DiskWrite = "disk.write";
 
-    /// <summary>What a definition reads from: the snapshot, the user's TjMax and the interface
-    /// that carries the default route (null when there is none).</summary>
-    public sealed record Context(IReadOnlyList<LinuxHwInfoSensor> Sensors, double TjMax, string? DefaultInterface);
+    /// <summary>What a definition reads from: the snapshot, the user's TjMax and the network
+    /// interface the NET page follows (see <see cref="NetworkRoutes.Preferred"/>).</summary>
+    public sealed record Context(IReadOnlyList<LinuxHwInfoSensor> Sensors, double TjMax, string? NetworkInterface);
+
+    /// <summary>The interfaces that report transfer rates, in snapshot order.</summary>
+    public static IReadOnlyList<string> Interfaces(IReadOnlyList<LinuxHwInfoSensor> sensors) => sensors
+        .Where(s => s.Source == SensorSourceKind.Network && s.Type == LinuxHwInfoReadingType.Throughput)
+        .Select(s => InterfaceOf(s.Id))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
 
     /// <summary>One derived metric: how to read it from a snapshot, and how to describe the value
     /// it read. Null when the snapshot has nothing for it.</summary>
@@ -157,24 +164,12 @@ internal static class PageMetrics
     }
 
     /// <summary>
-    /// A transfer rate of the default-route interface; without one, of the first interface. The
-    /// direction is the id's last segment (<c>net/&lt;iface&gt;/rx</c>), so it never depends on
-    /// the order the kernel lists the counters in.
+    /// A transfer rate of the interface the page follows. The direction is the id's last segment
+    /// (<c>net/&lt;iface&gt;/rx</c>), so it never depends on the order the kernel lists the
+    /// counters in.
     /// </summary>
-    private static LinuxHwInfoSensor? Network(Context context, string direction)
-    {
-        List<LinuxHwInfoSensor> rates = context.Sensors
-            .Where(s => s.Source == SensorSourceKind.Network && s.Type == LinuxHwInfoReadingType.Throughput)
-            .ToList();
-        if (rates.Count == 0)
-            return null;
-
-        string iface = context.DefaultInterface is { } preferred && rates.Any(s => s.Id == SensorId.Net(preferred, direction))
-            ? preferred
-            : InterfaceOf(rates[0].Id);
-
-        return ById(rates, SensorId.Net(iface, direction));
-    }
+    private static LinuxHwInfoSensor? Network(Context context, string direction) =>
+        context.NetworkInterface is { } iface ? ById(context.Sensors, SensorId.Net(iface, direction)) : null;
 
     private static string InterfaceOf(string id)
     {

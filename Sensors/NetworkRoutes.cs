@@ -3,13 +3,35 @@ using System.Globalization;
 namespace LoupixDeck.Plugin.LinuxHwInfo.Sensors;
 
 /// <summary>
-/// Finds the interface that carries the default route, read from <c>/proc/net/route</c>. It is the
-/// one whose traffic the NET page shows: bridges, containers and VPN helpers come and go, the
-/// default route is what the machine actually talks to the internet through.
+/// Picks the interface whose traffic the NET page shows: the one that carries the default route,
+/// read from <c>/proc/net/route</c>. Bridges, containers and VPN helpers come and go; the default
+/// route is what the machine actually talks to the internet through.
 /// </summary>
 internal static class NetworkRoutes
 {
     private const string RouteTable = "/proc/net/route";
+    private const string NetClassRoot = "/sys/class/net";
+
+    /// <summary>
+    /// Of <paramref name="interfaces"/>: the default-route interface; without one, the first
+    /// physical interface (one backed by a device — not a bridge, veth or tunnel); else the first.
+    /// </summary>
+    public static string? Preferred(IReadOnlyList<string> interfaces)
+    {
+        if (interfaces.Count == 0)
+            return null;
+
+        if (DefaultInterface() is { } route && interfaces.Contains(route))
+            return route;
+
+        foreach (string iface in interfaces)
+        {
+            if (Directory.Exists(Path.Combine(NetClassRoot, iface, "device")))
+                return iface;
+        }
+
+        return interfaces[0];
+    }
 
     /// <summary>The default-route interface with the lowest metric, or null when there is none.</summary>
     public static string? DefaultInterface()

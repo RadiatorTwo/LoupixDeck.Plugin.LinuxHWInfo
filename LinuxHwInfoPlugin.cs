@@ -78,12 +78,9 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         if (target != ButtonTargets.TouchButton || _service == null)
             return Task.FromResult<IReadOnlyList<MenuNode>>([]);
 
-        IReadOnlyList<LinuxHwInfoSensor> sensors = _service.Sensors;
-        if (sensors.Count == 0)
-            return Task.FromResult<IReadOnlyList<MenuNode>>([]);
-
+        // The pages need no sensor list, so they are offered before the first poll has finished.
         List<MenuNode> children = [new MenuNode { Name = "Pages", Children = PageNodes() }];
-        children.AddRange(SensorMenu.Build(sensors));
+        children.AddRange(SensorMenu.Build(_service.Sensors));
 
         return Task.FromResult<IReadOnlyList<MenuNode>>(
             [new MenuNode { Name = "LinuxHwInfo", Children = children }]);

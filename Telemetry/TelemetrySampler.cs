@@ -26,6 +26,7 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
     private readonly Dictionary<string, Track> _tracks = [];
     private volatile TelemetryFrame _frame = TelemetryFrame.Unavailable;
     private bool _started;
+    private string? _networkInterface;
 
     public TelemetryFrame Frame => _frame;
 
@@ -51,6 +52,7 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
 
             _started = false;
             _tracks.Clear();
+            _networkInterface = null;
             _frame = TelemetryFrame.Unavailable;
         }
 
@@ -91,7 +93,17 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         foreach (LinuxHwInfoSensor sensor in sensors)
             inputs.Add((MetricKeys.ForSensor(sensor), SensorMetrics.NativeValue(sensor), SensorMetrics.Describe(sensor, tj), sensor));
 
-        PageMetrics.Context context = new(sensors, tj, NetworkRoutes.Preferred(PageMetrics.Interfaces(sensors)));
+        string? networkInterface = NetworkRoutes.Preferred(PageMetrics.Interfaces(sensors));
+        if (networkInterface != _networkInterface)
+        {
+            // The NET page now follows another interface (VPN up, LAN/Wi-Fi switch): its history
+            // must not continue the previous interface's traffic.
+            _tracks.Remove(PageMetrics.NetDown);
+            _tracks.Remove(PageMetrics.NetUp);
+            _networkInterface = networkInterface;
+        }
+
+        PageMetrics.Context context = new(sensors, tj, networkInterface);
         foreach (PageMetrics.Definition definition in PageMetrics.All)
         {
             if (definition.Read(context) is { } reading)

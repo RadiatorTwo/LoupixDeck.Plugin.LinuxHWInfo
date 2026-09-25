@@ -34,8 +34,10 @@ internal static class SensorMetrics
             LinuxHwInfoReadingType.Temperature when sensor.Category == Categories.Gpu =>
                 new MetricInfo(MetricFormat.Temperature, 30, 95,
                     IsGpuCoreTemperature(sensor) ? ThresholdKind.GpuTemperature : ThresholdKind.None),
+            // Only a drive's main reading has the storage limits; NVMe controller sensors run hotter.
             LinuxHwInfoReadingType.Temperature when sensor.Category == Categories.Storage =>
-                new MetricInfo(MetricFormat.Temperature, 20, 80, ThresholdKind.StorageTemperature),
+                new MetricInfo(MetricFormat.Temperature, 20, 80,
+                    IsDriveTemperature(sensor) ? ThresholdKind.StorageTemperature : ThresholdKind.None),
             LinuxHwInfoReadingType.Temperature =>
                 new MetricInfo(MetricFormat.Temperature, 20, 100),
 
@@ -77,6 +79,16 @@ internal static class SensorMetrics
         && ((sensor.Source == SensorSourceKind.Nvml && sensor.Id.EndsWith("/temp", StringComparison.Ordinal))
             || (sensor.Source == SensorSourceKind.Hwmon && sensor.Category == Categories.Gpu
                 && sensor.Label.Equals("edge", StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// A drive's main temperature: hwmon channel temp1, which is NVMe's "Composite" — the value the
+    /// drive's own warning limits refer to — and drivetemp's only channel. NVMe "Sensor 1/2"
+    /// (controller, flash) routinely run 10–20 °C hotter within spec.
+    /// </summary>
+    public static bool IsDriveTemperature(LinuxHwInfoSensor sensor) =>
+        sensor.Type == LinuxHwInfoReadingType.Temperature
+        && sensor.Category == Categories.Storage
+        && sensor.Id.EndsWith("/temp1", StringComparison.Ordinal);
 
     /// <summary>Video memory readings — NVML's memory fields and amdgpu's VRAM counters.</summary>
     public static bool IsVram(LinuxHwInfoSensor sensor) =>

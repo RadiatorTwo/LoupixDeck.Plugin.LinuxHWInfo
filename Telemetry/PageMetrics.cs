@@ -85,8 +85,10 @@ internal static class PageMetrics
         new(NetDown, c => Of(Network(c, "rx"), new MetricInfo(MetricFormat.BytesPerSecond, 0, 0))),
         new(NetUp, c => Of(Network(c, "tx"), new MetricInfo(MetricFormat.BytesPerSecond, 0, 0))),
 
-        new(DiskTemp, c => Of(MaxBy(c.Sensors, s => s.Category == Categories.Storage
-                                                    && s.Type == LinuxHwInfoReadingType.Temperature),
+        // The hottest drive by its main reading; any storage temperature only when no drive has one.
+        new(DiskTemp, c => Of(MaxBy(c.Sensors, SensorMetrics.IsDriveTemperature)
+                              ?? MaxBy(c.Sensors, s => s.Category == Categories.Storage
+                                                       && s.Type == LinuxHwInfoReadingType.Temperature),
             new MetricInfo(MetricFormat.Temperature, 20, 80, ThresholdKind.StorageTemperature))),
         // All drives together: the page is about how busy storage is, not about one drive.
         new(DiskRead, c => DiskTotal(c.Sensors, "read")),

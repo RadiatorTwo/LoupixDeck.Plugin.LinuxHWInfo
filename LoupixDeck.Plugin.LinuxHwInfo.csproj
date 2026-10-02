@@ -17,6 +17,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Plugin icon, read from the assembly so it does not depend on the install layout. -->
+    <EmbeddedResource Include="icon.png" LogicalName="LoupixDeck.Plugin.LinuxHwInfo.icon.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="LoupixDeck.PluginSdk" Version="1.26.0">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>

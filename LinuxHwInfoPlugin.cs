@@ -36,8 +36,20 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         Version = new Version(1, 1, 0),
         SdkVersion = new Version(1, 26, 0),
         Author = "RadiatorTwo",
-        Description = "Display live Linux hardware sensor readings (hwmon, /proc, NVIDIA NVML) on touch buttons"
+        Description = "Display live Linux hardware sensor readings (hwmon, /proc, NVIDIA NVML) on touch buttons",
+        Icon = LoadIcon()
     };
+
+    /// <summary>The plugin icon (icon.png, embedded). Missing data only costs the icon.</summary>
+    private static byte[]? LoadIcon()
+    {
+        using Stream? stream = typeof(LinuxHwInfoPlugin).Assembly.GetManifestResourceStream("LoupixDeck.Plugin.LinuxHwInfo.icon.png");
+        if (stream == null) return null;
+
+        using MemoryStream buffer = new();
+        stream.CopyTo(buffer);
+        return buffer.ToArray();
+    }
 
     public override void Initialize(IPluginHost host)
     {

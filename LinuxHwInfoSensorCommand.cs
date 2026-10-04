@@ -27,7 +27,9 @@ internal sealed class LinuxHwInfoSensorCommand(TelemetrySampler telemetry) : IAn
         ParameterTemplate = "({Sensor})",
         Parameters = [new CommandParameter("Sensor", typeof(string))],
         // Surfaced per sensor through the dynamic menu.
-        HiddenFromMenu = true
+        HiddenFromMenu = true,
+        // The tile fills the whole key; no host icon or caption on top of it.
+        ButtonLayout = new ButtonLayoutDescriptor { Mode = ButtonLayoutMode.None }
     };
 
     public ButtonTargets SupportedTargets => ButtonTargets.TouchButton;

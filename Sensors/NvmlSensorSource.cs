@@ -21,6 +21,9 @@ internal sealed class NvmlSensorSource
 
     public bool IsAvailable => _initialized && _devices.Count > 0;
 
+    /// <summary>The most recent GPU read that failed, kept for the status action; null if none.</summary>
+    public SensorDiagnostic? LastError { get; private set; }
+
     public void Start()
     {
         if (_initialized)
@@ -106,9 +109,11 @@ internal sealed class NvmlSensorSource
             {
                 CollectDevice(device, sensors);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // A GPU that fell off the bus must not take the rest of the snapshot with it.
+                LastError = new SensorDiagnostic("Reading {0} through NVML failed ({1}: {2}).",
+                    [device.Name, ex.GetType().Name, ex.Message]);
             }
         }
 

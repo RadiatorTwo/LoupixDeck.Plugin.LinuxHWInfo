@@ -51,5 +51,14 @@
   "{0} sensor(s) from {1} hwmon chip(s) — NVML: {2} — {3}": "{0} Sensor(en) von {1} hwmon-Chip(s) — NVML: {2} — {3}",
   "never polled": "noch nie abgefragt",
   "last poll {0}s ago": "letzte Abfrage vor {0} s",
-  "not initialized": "nicht initialisiert"
+  "not initialized": "nicht initialisiert",
+  "LinuxHwInfo reads Linux kernel interfaces only — no sensors on this system.": "LinuxHwInfo liest nur Schnittstellen des Linux-Kernels — auf diesem System gibt es keine Sensoren.",
+  "{0} does not exist — this kernel exposes no hardware sensors.": "{0} existiert nicht — dieser Kernel stellt keine Hardwaresensoren bereit.",
+  "Access to {0} was denied ({1}).": "Zugriff auf {0} verweigert ({1}).",
+  "Reading {0} failed ({1}: {2}).": "Lesen von {0} fehlgeschlagen ({1}: {2}).",
+  "No hwmon chips found — load the sensor drivers for your board (e.g. run sensors-detect from lm-sensors).": "Keine hwmon-Chips gefunden — die Sensortreiber für dein Board laden (z. B. sensors-detect aus lm-sensors ausführen).",
+  "{0} hwmon chip(s) found, but none of their readings could be read — check the permissions under {1}.": "{0} hwmon-Chip(s) gefunden, aber keiner ihrer Werte ließ sich lesen — die Berechtigungen unter {1} prüfen.",
+  "Reading {0} through NVML failed ({1}: {2}).": "Lesen von {0} über NVML fehlgeschlagen ({1}: {2}).",
+  "Sensor poll failed ({0}: {1}).": "Sensorabfrage fehlgeschlagen ({0}: {1}).",
+  "Last error: {0}": "Letzter Fehler: {0}"
 }

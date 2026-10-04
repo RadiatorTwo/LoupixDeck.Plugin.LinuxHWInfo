@@ -24,6 +24,11 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     private const int DefaultPollIntervalSeconds = 2;
     private const long DefaultTjMax = 100;
 
+    // Release builds of the host send all console output, plugin log lines included, into its log
+    // file. Like the host's LOUPIXDECK_DEBUG_* switches, logging is opt-in.
+    private static readonly bool DebugLogging =
+        Environment.GetEnvironmentVariable("LOUPIXDECK_DEBUG_LINUXHWINFO") == "1";
+
     private LinuxHwInfoService? _service;
     private TelemetrySampler? _telemetry;
     private List<IPluginCommand> _commands = [];
@@ -55,12 +60,16 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     public override void Initialize(IPluginHost host)
     {
         _host = host;
-        _service = new LinuxHwInfoService(host.Logger)
+
+        // Without LOUPIXDECK_DEBUG_LINUXHWINFO=1 nothing is logged; Show Status still reports the
+        // sensor state.
+        IPluginLogger? logger = DebugLogging ? host.Logger : null;
+        _service = new LinuxHwInfoService(logger)
         {
             IntervalSeconds = ReadPollInterval(host)
         };
 
-        _telemetry = new TelemetrySampler(_service, ReadTjMax, host.Logger);
+        _telemetry = new TelemetrySampler(_service, ReadTjMax, logger);
         _commands = [new LinuxHwInfoSensorCommand(_telemetry), new LinuxHwInfoPagesCommand(_telemetry)];
         _telemetry.Start();
         _service.Start();

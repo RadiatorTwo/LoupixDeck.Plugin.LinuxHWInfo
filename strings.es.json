@@ -67,5 +67,8 @@
   "An NVIDIA GPU is installed, but NVML is not usable ({0}) — its readings are missing.": "Hay una GPU NVIDIA instalada, pero NVML no se puede usar ({0}) — faltan sus valores.",
   "Install the proprietary NVIDIA driver, which provides libnvidia-ml.so.1.": "Instala el controlador propietario de NVIDIA, que incluye libnvidia-ml.so.1.",
   "Battery": "Batería",
-  "Charge": "Carga"
+  "Charge": "Carga",
+  "Power page": "Página de potencia",
+  "VRAM page": "Página de VRAM",
+  "Battery page": "Página de batería"
 }

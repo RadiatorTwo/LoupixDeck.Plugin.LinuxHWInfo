@@ -65,5 +65,7 @@
   "Install lm-sensors and run sensors-detect to load the sensor drivers for your board.": "lm-sensors installieren und sensors-detect ausführen, um die Sensortreiber für dein Board zu laden.",
   "NVIDIA GPU readings (NVML)": "NVIDIA-GPU-Werte (NVML)",
   "An NVIDIA GPU is installed, but NVML is not usable ({0}) — its readings are missing.": "Eine NVIDIA-GPU ist eingebaut, aber NVML ist nicht nutzbar ({0}) — ihre Werte fehlen.",
-  "Install the proprietary NVIDIA driver, which provides libnvidia-ml.so.1.": "Den proprietären NVIDIA-Treiber installieren, der libnvidia-ml.so.1 mitbringt."
+  "Install the proprietary NVIDIA driver, which provides libnvidia-ml.so.1.": "Den proprietären NVIDIA-Treiber installieren, der libnvidia-ml.so.1 mitbringt.",
+  "Battery": "Akku",
+  "Charge": "Ladung"
 }

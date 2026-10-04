@@ -7,7 +7,8 @@ public enum SensorSourceKind
     Proc,
     Nvml,
     Network,
-    Disk
+    Disk,
+    Battery
 }
 
 /// <summary>

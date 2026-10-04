@@ -26,6 +26,7 @@ public sealed class LinuxHwInfoService : IDisposable
     private readonly ThroughputSensorSource _throughput = new();
     private readonly NvmlSensorSource _nvml = new();
     private readonly AmdGpuSensorSource _amdGpu = new();
+    private readonly BatterySensorSource _battery = new();
 
     private readonly IPluginLogger? _logger;
 
@@ -119,6 +120,7 @@ public sealed class LinuxHwInfoService : IDisposable
                 snapshot.AddRange(_throughput.Poll());
                 snapshot.AddRange(_nvml.Poll());
                 snapshot.AddRange(_amdGpu.Poll());
+                snapshot.AddRange(_battery.Poll());
 
                 _sensors = snapshot;
                 _lastPollUtc = DateTime.UtcNow;

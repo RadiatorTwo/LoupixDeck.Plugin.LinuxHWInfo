@@ -60,5 +60,10 @@
   "{0} hwmon chip(s) found, but none of their readings could be read — check the permissions under {1}.": "Se encontraron {0} chip(s) hwmon, pero no se pudo leer ninguno de sus valores — revisa los permisos en {1}.",
   "Reading {0} through NVML failed ({1}: {2}).": "Error al leer {0} mediante NVML ({1}: {2}).",
   "Sensor poll failed ({0}: {1}).": "Error en la lectura de sensores ({0}: {1}).",
-  "Last error: {0}": "Último error: {0}"
+  "Last error: {0}": "Último error: {0}",
+  "Hardware sensors (hwmon)": "Sensores de hardware (hwmon)",
+  "Install lm-sensors and run sensors-detect to load the sensor drivers for your board.": "Instala lm-sensors y ejecuta sensors-detect para cargar los controladores de sensores de tu placa.",
+  "NVIDIA GPU readings (NVML)": "Valores de la GPU NVIDIA (NVML)",
+  "An NVIDIA GPU is installed, but NVML is not usable ({0}) — its readings are missing.": "Hay una GPU NVIDIA instalada, pero NVML no se puede usar ({0}) — faltan sus valores.",
+  "Install the proprietary NVIDIA driver, which provides libnvidia-ml.so.1.": "Instala el controlador propietario de NVIDIA, que incluye libnvidia-ml.so.1."
 }

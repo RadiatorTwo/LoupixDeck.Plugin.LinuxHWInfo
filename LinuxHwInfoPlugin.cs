@@ -12,7 +12,7 @@ namespace LoupixDeck.Plugin.LinuxHwInfo;
 /// them as pixel tiles on touch buttons.
 /// The Linux counterpart to the HWiNFO and Argus Monitor plugins.
 /// </summary>
-public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginSettingsPage
+public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginSettingsPage, IPluginRequirements
 {
     public const string TransparentBackgroundKey = "background.transparent";
     public const string PollIntervalKey = "poll.intervalSeconds";
@@ -79,6 +79,53 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     {
         _telemetry?.Stop();
         _service?.Stop();
+    }
+
+    // ── Requirements ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Readable hwmon sensors, and NVML wherever an NVIDIA card is installed. Machines without an
+    /// NVIDIA card meet the NVML requirement, so AMD and Intel systems get no notice for it. Names and
+    /// hints are English keys the host translates through the strings files; a message carries the
+    /// reason with its details, so it is translated here and the host shows it as it is.
+    /// </summary>
+    public IReadOnlyList<PluginRequirement> GetRequirements()
+    {
+        try
+        {
+            SensorDiagnostic? hwmon = _service is null ? LinuxHwInfoService.ProbeHwmon() : _service.HwmonProblem;
+            bool nvmlMissing = OperatingSystem.IsLinux()
+                               && !(_service?.NvmlAvailable ?? false)
+                               && NvmlSensorSource.NvidiaGpuPresent();
+
+            return
+            [
+                new PluginRequirement
+                {
+                    Id = "hwmon",
+                    Name = "Hardware sensors (hwmon)",
+                    IsMet = hwmon is null,
+                    Message = hwmon?.Translate(Tr),
+                    InstallHint = "Install lm-sensors and run sensors-detect to load the sensor drivers for your board."
+                },
+                new PluginRequirement
+                {
+                    Id = "nvml",
+                    Name = "NVIDIA GPU readings (NVML)",
+                    IsMet = !nvmlMissing,
+                    Message = nvmlMissing
+                        ? string.Format(Tr("An NVIDIA GPU is installed, but NVML is not usable ({0}) — its readings are missing."),
+                            _service?.NvmlStatus ?? Tr("not initialized"))
+                        : null,
+                    InstallHint = "Install the proprietary NVIDIA driver, which provides libnvidia-ml.so.1."
+                }
+            ];
+        }
+        catch (Exception)
+        {
+            // Must never throw; the host would treat it as "no requirements" anyway.
+            return [];
+        }
     }
 
     private double ReadTjMax()

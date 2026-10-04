@@ -55,6 +55,17 @@ internal sealed partial class HwmonSensorSource(string root = "/sys/class/hwmon"
     }
 
     /// <summary>
+    /// Walks <paramref name="root"/> once, apart from the poll loop, and returns why it yields no
+    /// readings, or null when it yields some. Quick: a few hundred small sysfs reads.
+    /// </summary>
+    public static SensorDiagnostic? Probe(string root = "/sys/class/hwmon")
+    {
+        HwmonSensorSource probe = new(root);
+        probe.Poll();
+        return probe.Problem;
+    }
+
+    /// <summary>
     /// Enumerates the hwmon nodes and assigns each one a display group. Chips whose <c>name</c> appears more
     /// than once get a trailing instance number, ordered by device key so the numbering is deterministic and
     /// independent of the kernel's probe order.

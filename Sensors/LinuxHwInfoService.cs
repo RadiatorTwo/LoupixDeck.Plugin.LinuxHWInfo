@@ -43,6 +43,22 @@ public sealed class LinuxHwInfoService : IDisposable
     /// <summary>True once the loop has produced at least one snapshot.</summary>
     public bool IsAvailable => _lastPollUtc != default;
 
+    /// <summary>
+    /// Why hwmon yields no readings, or null when it yields some. Before the first poll the hwmon tree
+    /// is walked right away, so a caller asking early gets no false alarm.
+    /// </summary>
+    internal SensorDiagnostic? HwmonProblem => IsAvailable ? _hwmon.Problem : ProbeHwmon();
+
+    /// <summary>Walks the hwmon tree right now; see <see cref="HwmonSensorSource.Probe"/>.</summary>
+    internal static SensorDiagnostic? ProbeHwmon() =>
+        OperatingSystem.IsLinux() ? HwmonSensorSource.Probe() : new SensorDiagnostic(NotLinux, []);
+
+    /// <summary>True once NVML is initialized and reports at least one GPU.</summary>
+    internal bool NvmlAvailable => _nvml.IsAvailable;
+
+    /// <summary>NVML's state as the driver reports it (technical, not translated).</summary>
+    internal string NvmlStatus => _nvml.Status;
+
     public event Action? SnapshotUpdated;
 
     /// <summary>Poll cadence in seconds; clamped to a sane range. Takes effect on the next tick.</summary>

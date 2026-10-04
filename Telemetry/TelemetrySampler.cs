@@ -14,7 +14,8 @@ namespace LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
 /// Sampling follows the poll instead of a timer of its own: rates are deltas between two polls,
 /// so a faster sampler would only repeat the same value and flatten the chart into steps.
 /// </remarks>
-internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> tjMax, IPluginLogger? logger = null)
+internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<TelemetrySettings> readSettings,
+    IPluginLogger? logger = null)
     : IDisposable
 {
     /// <summary>Samples kept per metric — the width of the design's 72-px chart.</summary>
@@ -87,7 +88,8 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         }
 
         IReadOnlyList<LinuxHwInfoSensor> sensors = service.Sensors;
-        double tj = tjMax();
+        TelemetrySettings settings = readSettings();
+        double tj = settings.TjMax;
 
         List<(string Key, double Value, MetricInfo Info, LinuxHwInfoSensor? Sensor)> inputs = [];
         foreach (LinuxHwInfoSensor sensor in sensors)
@@ -135,12 +137,12 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
                         : PageMetrics.GpuTemp)?.State ?? MetricState.Ok,
                 _ => MetricState.Ok
             };
-            track.State = Thresholds.Evaluate(info.Threshold, smoothed, tj, track.State, companion);
+            track.State = Thresholds.Evaluate(info.Threshold, smoothed, settings, track.State, companion);
 
             double[] history = track.ToArray();
             double max = info.GrowToPeak ? Math.Max(info.Max, Peak(history)) : info.Max;
             metrics[key] = new MetricSnapshot(smoothed, track.State, history, info.Min, max,
-                Thresholds.LimitsFor(info.Threshold, tj)?.Warn, info.Format, info.Unit);
+                Thresholds.LimitsFor(info.Threshold, settings)?.Warn, info.Format, info.Unit);
         }
 
         // A metric that vanished (device unplugged, interface down) keeps a gap in its chart and is

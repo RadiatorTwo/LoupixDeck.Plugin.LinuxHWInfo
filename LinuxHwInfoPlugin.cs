@@ -69,7 +69,7 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
             IntervalSeconds = ReadPollInterval(host)
         };
 
-        _telemetry = new TelemetrySampler(_service, ReadTjMax, logger);
+        _telemetry = new TelemetrySampler(_service, ReadSettings, logger);
         _commands = [new LinuxHwInfoSensorCommand(_telemetry), new LinuxHwInfoPagesCommand(_telemetry)];
         _telemetry.Start();
         _service.Start();
@@ -128,10 +128,10 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         }
     }
 
-    private double ReadTjMax()
+    private TelemetrySettings ReadSettings()
     {
         long tjMax = _host?.Settings.Get(CpuTjMaxKey, DefaultTjMax) ?? DefaultTjMax;
-        return Math.Clamp(tjMax, 60, 125);
+        return TelemetrySettings.Default with { TjMax = Math.Clamp(tjMax, 60, 125) };
     }
 
     public override IEnumerable<IPluginCommand> GetCommands() => _commands;

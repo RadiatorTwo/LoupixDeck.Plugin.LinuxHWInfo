@@ -66,7 +66,8 @@ internal static class Categories
     public const string Storage = "Storage";
     public const string Memory = "Memory";
     public const string Network = "Network";
+    public const string Battery = "Battery";
     public const string Other = "Other";
 
-    public static readonly string[] Order = [Cpu, Gpu, Motherboard, Storage, Memory, Network, Other];
+    public static readonly string[] Order = [Cpu, Gpu, Motherboard, Storage, Memory, Network, Battery, Other];
 }

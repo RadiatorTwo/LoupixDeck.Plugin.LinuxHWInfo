@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using LoupixDeck.Plugin.LinuxHwInfo.Rendering.Tiles;
 using LoupixDeck.Plugin.LinuxHwInfo.Sensors;
 using LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
@@ -11,7 +12,7 @@ namespace LoupixDeck.Plugin.LinuxHwInfo;
 /// them as pixel tiles on touch buttons.
 /// The Linux counterpart to the HWiNFO and Argus Monitor plugins.
 /// </summary>
-public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginSettingsPage
+public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginSettingsPage, IPluginRequirements
 {
     public const string TransparentBackgroundKey = "background.transparent";
     public const string PollIntervalKey = "poll.intervalSeconds";
@@ -20,8 +21,26 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     /// limits are TjMax − 15 / TjMax − 5; hwmon does not report TjMax reliably.</summary>
     public const string CpuTjMaxKey = "thresholds.cpuTjMax";
 
+    /// <summary>Settings key: when true, temperatures are shown in °F. Limits stay in °C.</summary>
+    public const string FahrenheitKey = "display.fahrenheit";
+
+    // Settings keys of the alert limits. Absent from older settings files, so each falls back to
+    // the value that was hardcoded before (TelemetrySettings.Default).
+    private const string GpuWarnKey = "thresholds.gpuWarn";
+    private const string GpuCriticalKey = "thresholds.gpuCritical";
+    private const string StorageWarnKey = "thresholds.storageWarn";
+    private const string StorageCriticalKey = "thresholds.storageCritical";
+    private const string RamWarnKey = "thresholds.ramWarn";
+    private const string RamCriticalKey = "thresholds.ramCritical";
+    private const string FanStallKey = "thresholds.fanStallRpm";
+
     private const int DefaultPollIntervalSeconds = 2;
     private const long DefaultTjMax = 100;
+
+    // Release builds of the host send all console output, plugin log lines included, into its log
+    // file. Like the host's LOUPIXDECK_DEBUG_* switches, logging is opt-in.
+    private static readonly bool DebugLogging =
+        Environment.GetEnvironmentVariable("LOUPIXDECK_DEBUG_LINUXHWINFO") == "1";
 
     private LinuxHwInfoService? _service;
     private TelemetrySampler? _telemetry;
@@ -34,7 +53,7 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         Id = "linuxhwinfo",
         Name = "LinuxHwInfo",
         Version = new Version(1, 1, 0),
-        SdkVersion = new Version(1, 26, 0),
+        SdkVersion = new Version(1, 28, 0),
         Author = "RadiatorTwo",
         Description = "Display live Linux hardware sensor readings (hwmon, /proc, NVIDIA NVML) on touch buttons",
         Icon = LoadIcon()
@@ -54,12 +73,16 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     public override void Initialize(IPluginHost host)
     {
         _host = host;
-        _service = new LinuxHwInfoService(host.Logger)
+
+        // Without LOUPIXDECK_DEBUG_LINUXHWINFO=1 nothing is logged; Show Status still reports the
+        // sensor state.
+        IPluginLogger? logger = DebugLogging ? host.Logger : null;
+        _service = new LinuxHwInfoService(logger)
         {
             IntervalSeconds = ReadPollInterval(host)
         };
 
-        _telemetry = new TelemetrySampler(_service, ReadTjMax, host.Logger);
+        _telemetry = new TelemetrySampler(_service, ReadSettings, logger);
         _commands = [new LinuxHwInfoSensorCommand(_telemetry), new LinuxHwInfoPagesCommand(_telemetry)];
         _telemetry.Start();
         _service.Start();
@@ -71,11 +94,81 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
         _service?.Stop();
     }
 
-    private double ReadTjMax()
+    // ── Requirements ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Readable hwmon sensors, and NVML wherever an NVIDIA card is installed. Machines without an
+    /// NVIDIA card meet the NVML requirement, so AMD and Intel systems get no notice for it. Names and
+    /// hints are English keys the host translates through the strings files; a message carries the
+    /// reason with its details, so it is translated here and the host shows it as it is.
+    /// </summary>
+    public IReadOnlyList<PluginRequirement> GetRequirements()
     {
-        long tjMax = _host?.Settings.Get(CpuTjMaxKey, DefaultTjMax) ?? DefaultTjMax;
-        return Math.Clamp(tjMax, 60, 125);
+        try
+        {
+            SensorDiagnostic? hwmon = _service is null ? LinuxHwInfoService.ProbeHwmon() : _service.HwmonProblem;
+            bool nvmlMissing = OperatingSystem.IsLinux()
+                               && !(_service?.NvmlAvailable ?? false)
+                               && NvmlSensorSource.NvidiaGpuPresent();
+
+            return
+            [
+                new PluginRequirement
+                {
+                    Id = "hwmon",
+                    Name = "Hardware sensors (hwmon)",
+                    IsMet = hwmon is null,
+                    Message = hwmon?.Translate(Tr),
+                    InstallHint = "Install lm-sensors and run sensors-detect to load the sensor drivers for your board."
+                },
+                new PluginRequirement
+                {
+                    Id = "nvml",
+                    Name = "NVIDIA GPU readings (NVML)",
+                    IsMet = !nvmlMissing,
+                    Message = nvmlMissing
+                        ? string.Format(Tr("An NVIDIA GPU is installed, but NVML is not usable ({0}) — its readings are missing."),
+                            _service?.NvmlStatus ?? Tr("not initialized"))
+                        : null,
+                    InstallHint = "Install the proprietary NVIDIA driver, which provides libnvidia-ml.so.1."
+                }
+            ];
+        }
+        catch (Exception)
+        {
+            // Must never throw; the host would treat it as "no requirements" anyway.
+            return [];
+        }
     }
+
+    private TelemetrySettings ReadSettings()
+    {
+        TelemetrySettings d = TelemetrySettings.Default;
+        (double gpuWarn, double gpuCritical) = ReadLimits(GpuWarnKey, d.GpuWarn, GpuCriticalKey, d.GpuCritical, 150);
+        (double storageWarn, double storageCritical) =
+            ReadLimits(StorageWarnKey, d.StorageWarn, StorageCriticalKey, d.StorageCritical, 150);
+        (double ramWarn, double ramCritical) = ReadLimits(RamWarnKey, d.RamWarn, RamCriticalKey, d.RamCritical, 100);
+
+        return new TelemetrySettings(
+            Math.Clamp(ReadNumber(CpuTjMaxKey, DefaultTjMax), 60, 125),
+            gpuWarn, gpuCritical, storageWarn, storageCritical, ramWarn, ramCritical,
+            Math.Clamp(ReadNumber(FanStallKey, d.StalledFanRpm), 0, 10000),
+            _host?.Settings.Get(FahrenheitKey, false) ?? false);
+    }
+
+    /// <summary>A warn/critical pair in 0..<paramref name="max"/>; a warn limit above the critical
+    /// one is lowered to it, so the critical state stays reachable.</summary>
+    private (double Warn, double Critical) ReadLimits(string warnKey, double warnDefault, string criticalKey,
+        double criticalDefault, double max)
+    {
+        double critical = Math.Clamp(ReadNumber(criticalKey, criticalDefault), 0, max);
+        double warn = Math.Clamp(ReadNumber(warnKey, warnDefault), 0, max);
+        return (Math.Min(warn, critical), critical);
+    }
+
+    /// <summary>Number settings come back as <c>long</c> from the JSON store.</summary>
+    private double ReadNumber(string key, double defaultValue) =>
+        _host?.Settings.Get(key, (long)defaultValue) ?? defaultValue;
 
     public override IEnumerable<IPluginCommand> GetCommands() => _commands;
 
@@ -101,13 +194,16 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     /// <summary>The paging tile (every page, press for the next) and one fixed tile per page.</summary>
     private static List<MenuNode> PageNodes() =>
     [
-        PagesNode("All pages (press to cycle)", ComponentPages.DefaultSelection),
+        PagesNode("All pages (press to cycle)", ComponentPages.AllSelection),
         PagesNode("CPU page", ComponentPages.Cpu.Id),
         PagesNode("GPU page", ComponentPages.Gpu.Id),
         PagesNode("RAM page", ComponentPages.Ram.Id),
         PagesNode("Network page", ComponentPages.Net.Id),
         PagesNode("Disk page", ComponentPages.Disk.Id),
-        PagesNode("CPU summary", ComponentPages.Summary.Id)
+        PagesNode("CPU summary", ComponentPages.Summary.Id),
+        PagesNode("Power page", ComponentPages.Power.Id),
+        PagesNode("VRAM page", ComponentPages.Vram.Id),
+        PagesNode("Battery page", ComponentPages.Battery.Id)
     ];
 
     private static MenuNode PagesNode(string name, string pages) => new()
@@ -147,8 +243,46 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
             Description = "Maximum junction temperature of your CPU, from the vendor's spec sheet " +
                           "(typically 95 for AMD Ryzen, 100–105 for Intel). CPU temperature turns amber " +
                           "at TjMax − 15 and red at TjMax − 5."
+        },
+        new PluginSettingDescriptor
+        {
+            Key = FahrenheitKey,
+            Label = "Show temperatures in °F",
+            Kind = PluginSettingKind.Toggle,
+            DefaultValue = false,
+            Description = "Show temperatures in degrees Fahrenheit. The alert limits below stay in °C."
+        },
+        new PluginSettingDescriptor
+        {
+            Key = "thresholds.heading",
+            Label = "Alert limits",
+            Kind = PluginSettingKind.Heading,
+            Description = "A reading turns amber at its warning limit and red at its critical limit."
+        },
+        LimitSetting(GpuWarnKey, "GPU warning (°C)", TelemetrySettings.Default.GpuWarn),
+        LimitSetting(GpuCriticalKey, "GPU critical (°C)", TelemetrySettings.Default.GpuCritical),
+        LimitSetting(StorageWarnKey, "Drive warning (°C)", TelemetrySettings.Default.StorageWarn),
+        LimitSetting(StorageCriticalKey, "Drive critical (°C)", TelemetrySettings.Default.StorageCritical),
+        LimitSetting(RamWarnKey, "RAM load warning (%)", TelemetrySettings.Default.RamWarn),
+        LimitSetting(RamCriticalKey, "RAM load critical (%)", TelemetrySettings.Default.RamCritical),
+        new PluginSettingDescriptor
+        {
+            Key = FanStallKey,
+            Label = "Fan stalled below (RPM)",
+            Kind = PluginSettingKind.Number,
+            DefaultValue = (long)TelemetrySettings.Default.StalledFanRpm,
+            Description = "A CPU or GPU fan slower than this turns red while the temperature it cools is " +
+                          "at its warning or critical limit."
         }
     ];
+
+    private static PluginSettingDescriptor LimitSetting(string key, string label, double defaultValue) => new()
+    {
+        Key = key,
+        Label = label,
+        Kind = PluginSettingKind.Number,
+        DefaultValue = (long)defaultValue
+    };
 
     public IReadOnlyList<PluginSettingAction> SettingsActions => _settingsActions ??=
     [
@@ -165,13 +299,18 @@ public sealed class LinuxHwInfoPlugin : LoupixPlugin, IMenuContributor, IPluginS
     {
         try
         {
-            return _host?.Tr(english) ?? english;
+            return _host is null ? english : HostTr(_host, english);
         }
         catch (MissingMethodException)
         {
             return english;
         }
     }
+
+    // Kept out of line: the JIT resolves IPluginHost.Tr when it compiles this method, which throws
+    // on a host without it — inside Tr's try block rather than in its caller.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string HostTr(IPluginHost host, string english) => host.Tr(english);
 
     public void OnSettingsSaved()
     {

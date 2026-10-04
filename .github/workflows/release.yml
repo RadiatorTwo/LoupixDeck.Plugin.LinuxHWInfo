@@ -17,3 +17,4 @@ jobs:
     with:
       # The project name differs in case from the repository name.
       project: LoupixDeck.Plugin.LinuxHwInfo.csproj
+      build-sdk: false      # the plugin references an SDK version published on nuget.org

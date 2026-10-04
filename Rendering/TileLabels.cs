@@ -37,7 +37,8 @@ internal static partial class TileLabels
         ["GPU"] = "GPU",
         ["Memory"] = "RAM",
         ["Storage"] = "Disk",
-        ["Network"] = "Net"
+        ["Network"] = "Net",
+        ["Battery"] = "Bat"
     };
 
     /// <summary>Words that only repeat the quantity. Dropped when something else is left.</summary>

@@ -26,6 +26,12 @@ internal static class PageMetrics
     public const string DiskTemp = "disk.temp";
     public const string DiskRead = "disk.read";
     public const string DiskWrite = "disk.write";
+    public const string GpuPower = "gpu.power";
+    public const string PowerTotal = "pwr.total";
+    public const string VramLoad = "vram.load";
+    public const string VramUsed = "vram.used";
+    public const string VramFree = "vram.free";
+    public const string BatteryLevel = "bat.level";
 
     /// <summary>What a definition reads from: the snapshot, the user's TjMax and the network
     /// interface the NET page follows (see <see cref="NetworkRoutes.Preferred"/>).</summary>
@@ -61,8 +67,7 @@ internal static class PageMetrics
             new MetricInfo(MetricFormat.Rpm, 0, 2500, ThresholdKind.CpuFanStall, GrowToPeak: true))),
         new(CpuLoad, c => Of(ById(c.Sensors, SensorId.Proc("cpu", "total")),
             new MetricInfo(MetricFormat.Percent, 0, 100, Smooth: true))),
-        new(CpuPower, c => Of(First(c.Sensors, s => s.Category == Categories.Cpu
-                                                    && s.Type == LinuxHwInfoReadingType.Power),
+        new(CpuPower, c => Of(CpuPowerSensor(c.Sensors),
             new MetricInfo(MetricFormat.Watt, 0, 100, GrowToPeak: true))),
 
         new(GpuTemp, c => Of(First(Gpu(c.Sensors), SensorMetrics.IsGpuCoreTemperature)
@@ -97,7 +102,32 @@ internal static class PageMetrics
             new MetricInfo(MetricFormat.Temperature, 20, 80, ThresholdKind.StorageTemperature))),
         // All drives together: the page is about how busy storage is, not about one drive.
         new(DiskRead, c => DiskTotal(c.Sensors, "read")),
-        new(DiskWrite, c => DiskTotal(c.Sensors, "write"))
+        new(DiskWrite, c => DiskTotal(c.Sensors, "write")),
+
+        new(GpuPower, c => Of(GpuPowerSensor(c.Sensors),
+            new MetricInfo(MetricFormat.Watt, 0, 300, GrowToPeak: true))),
+        // CPU plus GPU power; whichever is reported when one is missing.
+        new(PowerTotal, c => (CpuPowerSensor(c.Sensors), GpuPowerSensor(c.Sensors)) switch
+        {
+            (null, null) => null,
+            (var cpu, var gpu) => ((cpu?.Value ?? 0) + (gpu?.Value ?? 0),
+                new MetricInfo(MetricFormat.Watt, 0, 400, GrowToPeak: true))
+        }),
+
+        // The page's GPU: NVML's memory fields or amdgpu's DRM VRAM counters.
+        new(VramLoad, c => Of(Vram(c.Sensors, "mem.percent", "drm.vram_percent"),
+            new MetricInfo(MetricFormat.Percent, 0, 100))),
+        new(VramUsed, c => Of(Vram(c.Sensors, "mem.used", "drm.vram_used"),
+            new MetricInfo(MetricFormat.Megabytes, 0, 0))),
+        new(VramFree, c => Vram(c.Sensors, "mem.total", "drm.vram_total") is { } total
+                           && Vram(c.Sensors, "mem.used", "drm.vram_used") is { } used
+            ? (Math.Max(0, SensorMetrics.NativeValue(total) - SensorMetrics.NativeValue(used)),
+                new MetricInfo(MetricFormat.Megabytes, 0, 0))
+            : null),
+
+        // The first battery that powers the machine. Absent on desktops, so the page is skipped there.
+        new(BatteryLevel, c => Of(First(c.Sensors, s => s.Source == SensorSourceKind.Battery),
+            new MetricInfo(MetricFormat.Percent, 0, 100)))
     ];
 
     private static (double, MetricInfo)? Of(LinuxHwInfoSensor? sensor, MetricInfo info) =>
@@ -137,6 +167,18 @@ internal static class PageMetrics
     private static LinuxHwInfoSensor? CpuFanSensor(IReadOnlyList<LinuxHwInfoSensor> sensors) =>
         First(sensors, SensorMetrics.IsCpuFan)
         ?? First(sensors, s => s.Type == LinuxHwInfoReadingType.Fan && s.Category == Categories.Motherboard && s.Value > 0);
+
+    /// <summary>The CPU's power reading, where a hwmon driver reports one (zenpower, amd_energy).</summary>
+    private static LinuxHwInfoSensor? CpuPowerSensor(IReadOnlyList<LinuxHwInfoSensor> sensors) =>
+        First(sensors, s => s.Category == Categories.Cpu && s.Type == LinuxHwInfoReadingType.Power);
+
+    /// <summary>Board power of the page's GPU: NVML, or amdgpu's hwmon power channel.</summary>
+    private static LinuxHwInfoSensor? GpuPowerSensor(IReadOnlyList<LinuxHwInfoSensor> sensors) =>
+        First(Gpu(sensors), s => s.Type == LinuxHwInfoReadingType.Power);
+
+    /// <summary>The VRAM reading of the page's GPU whose id ends in one of <paramref name="fields"/>.</summary>
+    private static LinuxHwInfoSensor? Vram(IReadOnlyList<LinuxHwInfoSensor> sensors, params string[] fields) =>
+        First(Gpu(sensors), s => fields.Any(field => s.Id.EndsWith("/" + field, StringComparison.Ordinal)));
 
     /// <summary>
     /// The readings of one GPU, so the page never mixes two cards: the first NVIDIA card, else the

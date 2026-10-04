@@ -21,6 +21,25 @@ internal sealed class NvmlSensorSource
 
     public bool IsAvailable => _initialized && _devices.Count > 0;
 
+    /// <summary>The most recent GPU read that failed, kept for the status action; null if none.</summary>
+    public SensorDiagnostic? LastError { get; private set; }
+
+    /// <summary>
+    /// Whether an NVIDIA display controller sits on the PCI bus (vendor 0x10de, class 0x03xxxx),
+    /// whatever driver runs it. Tells "no NVIDIA card" apart from "NVIDIA card, but no NVML".
+    /// </summary>
+    public static bool NvidiaGpuPresent(string pciRoot = "/sys/bus/pci/devices")
+    {
+        foreach (string device in SysfsIo.EnumerateDirectories(pciRoot))
+        {
+            if (string.Equals(SysfsIo.ReadText(Path.Combine(device, "vendor")), "0x10de", StringComparison.OrdinalIgnoreCase)
+                && (SysfsIo.ReadText(Path.Combine(device, "class"))?.StartsWith("0x03", StringComparison.Ordinal) ?? false))
+                return true;
+        }
+
+        return false;
+    }
+
     public void Start()
     {
         if (_initialized)
@@ -106,9 +125,11 @@ internal sealed class NvmlSensorSource
             {
                 CollectDevice(device, sensors);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // A GPU that fell off the bus must not take the rest of the snapshot with it.
+                LastError = new SensorDiagnostic("Reading {0} through NVML failed ({1}: {2}).",
+                    [device.Name, ex.GetType().Name, ex.Message]);
             }
         }
 

@@ -12,9 +12,9 @@ namespace LoupixDeck.Plugin.LinuxHwInfo.Sensors;
 /// the real path of its <c>device</c> symlink — which is built from immutable wiring (PCI slot, i2c bus +
 /// address, Super-I/O base address) rather than enumeration order. See <see cref="ResolveDeviceKey"/>.
 /// </remarks>
-internal sealed partial class HwmonSensorSource
+/// <param name="root">The hwmon class directory; only tests pass another one.</param>
+internal sealed partial class HwmonSensorSource(string root = "/sys/class/hwmon")
 {
-    private const string HwmonRoot = "/sys/class/hwmon";
 
     /// <summary>Channel prefixes we surface, with their sysfs raw unit divisor and display unit.</summary>
     private static readonly (string Prefix, LinuxHwInfoReadingType Type, double Divisor, string Unit)[] ChannelTypes =
@@ -29,16 +29,40 @@ internal sealed partial class HwmonSensorSource
     /// <summary>Number of hwmon chips seen during the most recent walk — surfaced in the status action.</summary>
     public int ChipCount { get; private set; }
 
+    /// <summary>Why the most recent walk produced no readings, or null when it produced some.</summary>
+    public SensorDiagnostic? Problem { get; private set; }
+
     public IEnumerable<LinuxHwInfoSensor> Poll()
     {
-        List<HwmonChip> chips = DiscoverChips();
+        List<HwmonChip> chips = DiscoverChips(out SensorDiagnostic? rootProblem);
         ChipCount = chips.Count;
 
         List<LinuxHwInfoSensor> sensors = [];
         foreach (HwmonChip chip in chips)
             CollectChannels(chip, sensors);
 
+        Problem = rootProblem;
+        if (Problem is null && sensors.Count == 0)
+        {
+            Problem = chips.Count == 0
+                ? new SensorDiagnostic("No hwmon chips found — load the sensor drivers for your board " +
+                                       "(e.g. run sensors-detect from lm-sensors).", [])
+                : new SensorDiagnostic("{0} hwmon chip(s) found, but none of their readings could be read — " +
+                                       "check the permissions under {1}.", [chips.Count, root]);
+        }
+
         return sensors;
+    }
+
+    /// <summary>
+    /// Walks <paramref name="root"/> once, apart from the poll loop, and returns why it yields no
+    /// readings, or null when it yields some. Quick: a few hundred small sysfs reads.
+    /// </summary>
+    public static SensorDiagnostic? Probe(string root = "/sys/class/hwmon")
+    {
+        HwmonSensorSource probe = new(root);
+        probe.Poll();
+        return probe.Problem;
     }
 
     /// <summary>
@@ -46,11 +70,34 @@ internal sealed partial class HwmonSensorSource
     /// than once get a trailing instance number, ordered by device key so the numbering is deterministic and
     /// independent of the kernel's probe order.
     /// </summary>
-    private static List<HwmonChip> DiscoverChips()
+    private List<HwmonChip> DiscoverChips(out SensorDiagnostic? problem)
     {
         List<HwmonChip> chips = [];
 
-        foreach (string dir in SysfsIo.EnumerateDirectories(HwmonRoot))
+        // Read directly rather than through SysfsIo, which hides why the class directory is unusable.
+        string[] dirs;
+        try
+        {
+            dirs = Directory.GetDirectories(root);
+            problem = null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            problem = new SensorDiagnostic("{0} does not exist — this kernel exposes no hardware sensors.", [root]);
+            return chips;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            problem = new SensorDiagnostic("Access to {0} was denied ({1}).", [root, ex.Message]);
+            return chips;
+        }
+        catch (Exception ex)
+        {
+            problem = new SensorDiagnostic("Reading {0} failed ({1}: {2}).", [root, ex.GetType().Name, ex.Message]);
+            return chips;
+        }
+
+        foreach (string dir in dirs)
         {
             string? name = SysfsIo.ReadText(Path.Combine(dir, "name"));
             if (string.IsNullOrEmpty(name))

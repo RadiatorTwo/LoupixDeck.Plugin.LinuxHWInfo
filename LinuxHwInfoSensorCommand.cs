@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using LoupixDeck.Plugin.LinuxHwInfo.Rendering;
 using LoupixDeck.Plugin.LinuxHwInfo.Rendering.Pixel;
 using LoupixDeck.Plugin.LinuxHwInfo.Rendering.Tiles;
@@ -17,6 +18,9 @@ internal sealed class LinuxHwInfoSensorCommand(TelemetrySampler telemetry) : IAn
 {
     public const string Name = "LinuxHwInfo.Sensor";
 
+    // Sensor reference → its row for the snapshot it was built from.
+    private readonly ConcurrentDictionary<string, RowOfSnapshot> _rows = new(StringComparer.Ordinal);
+
     public CommandDescriptor Descriptor { get; } = new()
     {
         CommandName = Name,
@@ -27,7 +31,9 @@ internal sealed class LinuxHwInfoSensorCommand(TelemetrySampler telemetry) : IAn
         ParameterTemplate = "({Sensor})",
         Parameters = [new CommandParameter("Sensor", typeof(string))],
         // Surfaced per sensor through the dynamic menu.
-        HiddenFromMenu = true
+        HiddenFromMenu = true,
+        // The tile fills the whole key; no host icon or caption on top of it.
+        ButtonLayout = new ButtonLayoutDescriptor { Mode = ButtonLayoutMode.None }
     };
 
     public ButtonTargets SupportedTargets => ButtonTargets.TouchButton;
@@ -49,16 +55,31 @@ internal sealed class LinuxHwInfoSensorCommand(TelemetrySampler telemetry) : IAn
     {
         TelemetryFrame frame = telemetry.Frame;
 
-        List<SensorRow> rows = [];
+        List<SensorRow> rows = new(SensorTileLayout.MaxRows);
         foreach (string? sensorRef in SensorReferences(ctx))
         {
-            rows.Add(LinuxReadingBuilder.Build(sensorRef, frame.Sensors));
+            rows.Add(Row(sensorRef, frame.Sensors));
             if (rows.Count >= SensorTileLayout.MaxRows)
                 break;
         }
 
         SensorTileLayout.Draw(surface, rows, frame, blinkOn);
     }
+
+    /// <summary>The row of one sensor reference. It depends only on the reference and the sensor
+    /// snapshot, so it is built once per snapshot instead of on every frame.</summary>
+    private SensorRow Row(string? reference, IReadOnlyList<LinuxHwInfoSensor> sensors)
+    {
+        string key = reference ?? string.Empty;
+        if (_rows.TryGetValue(key, out RowOfSnapshot? cached) && ReferenceEquals(cached.Sensors, sensors))
+            return cached.Row;
+
+        SensorRow row = LinuxReadingBuilder.Build(reference, sensors);
+        _rows[key] = new RowOfSnapshot(sensors, row);
+        return row;
+    }
+
+    private sealed record RowOfSnapshot(IReadOnlyList<LinuxHwInfoSensor> Sensors, SensorRow Row);
 
     /// <summary>
     /// The sensor references to render, in order. On a multi-command button the whole sequence is available:

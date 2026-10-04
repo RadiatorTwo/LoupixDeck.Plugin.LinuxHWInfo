@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using LoupixDeck.PluginSdk;
 
 namespace LoupixDeck.Plugin.LinuxHwInfo.Sensors;
@@ -17,15 +18,20 @@ public sealed class LinuxHwInfoService : IDisposable
     private const int MinimumIntervalSeconds = 1;
     private const int MaximumIntervalSeconds = 60;
 
+    /// <summary>Shown by the status action, and logged, wherever the plugin is not on Linux.</summary>
+    public const string NotLinux = "LinuxHwInfo reads Linux kernel interfaces only — no sensors on this system.";
+
     private readonly HwmonSensorSource _hwmon = new();
     private readonly ProcSensorSource _proc = new();
     private readonly ThroughputSensorSource _throughput = new();
     private readonly NvmlSensorSource _nvml = new();
     private readonly AmdGpuSensorSource _amdGpu = new();
+    private readonly BatterySensorSource _battery = new();
 
     private readonly IPluginLogger? _logger;
 
     private volatile IReadOnlyList<LinuxHwInfoSensor> _sensors = [];
+    private volatile SensorDiagnostic? _lastError;
     private CancellationTokenSource? _cts;
     private Task? _pollTask;
     private DateTime _lastPollUtc;
@@ -37,6 +43,22 @@ public sealed class LinuxHwInfoService : IDisposable
 
     /// <summary>True once the loop has produced at least one snapshot.</summary>
     public bool IsAvailable => _lastPollUtc != default;
+
+    /// <summary>
+    /// Why hwmon yields no readings, or null when it yields some. Before the first poll the hwmon tree
+    /// is walked right away, so a caller asking early gets no false alarm.
+    /// </summary>
+    internal SensorDiagnostic? HwmonProblem => IsAvailable ? _hwmon.Problem : ProbeHwmon();
+
+    /// <summary>Walks the hwmon tree right now; see <see cref="HwmonSensorSource.Probe"/>.</summary>
+    internal static SensorDiagnostic? ProbeHwmon() =>
+        OperatingSystem.IsLinux() ? HwmonSensorSource.Probe() : new SensorDiagnostic(NotLinux, []);
+
+    /// <summary>True once NVML is initialized and reports at least one GPU.</summary>
+    internal bool NvmlAvailable => _nvml.IsAvailable;
+
+    /// <summary>NVML's state as the driver reports it (technical, not translated).</summary>
+    internal string NvmlStatus => _nvml.Status;
 
     public event Action? SnapshotUpdated;
 
@@ -54,7 +76,7 @@ public sealed class LinuxHwInfoService : IDisposable
 
         if (!OperatingSystem.IsLinux())
         {
-            _logger?.Warn("LinuxHwInfo only reads Linux kernel interfaces — no sensors will be reported.");
+            _logger?.Warn(NotLinux);
             return;
         }
 
@@ -98,6 +120,7 @@ public sealed class LinuxHwInfoService : IDisposable
                 snapshot.AddRange(_throughput.Poll());
                 snapshot.AddRange(_nvml.Poll());
                 snapshot.AddRange(_amdGpu.Poll());
+                snapshot.AddRange(_battery.Poll());
 
                 _sensors = snapshot;
                 _lastPollUtc = DateTime.UtcNow;
@@ -105,7 +128,8 @@ public sealed class LinuxHwInfoService : IDisposable
             }
             catch (Exception ex)
             {
-                // One bad poll must never kill the loop — log and try again on the next tick.
+                // One bad poll must never kill the loop — record it and try again on the next tick.
+                _lastError = new SensorDiagnostic("Sensor poll failed ({0}: {1}).", [ex.GetType().Name, ex.Message]);
                 _logger?.Error("Sensor poll failed.", ex);
             }
 
@@ -120,19 +144,43 @@ public sealed class LinuxHwInfoService : IDisposable
         }
     }
 
-    /// <summary>Short human-readable state for the settings page's status action. <paramref name="tr"/>
-    /// translates the English text; the NVML status is technical and stays as the driver reports it.</summary>
+    /// <summary>
+    /// Short human-readable state for the settings page's status action: the counts, why hwmon yields
+    /// nothing (no chips, no access) and the last poll and NVML errors. <paramref name="tr"/> translates
+    /// the English text; the NVML status is technical and stays as the driver reports it.
+    /// </summary>
     public string Diagnostics(Func<string, string> tr)
     {
+        if (!OperatingSystem.IsLinux())
+            return tr(NotLinux);
+
         IReadOnlyList<LinuxHwInfoSensor> sensors = _sensors;
         string age = _lastPollUtc == default
             ? tr("never polled")
             : string.Format(tr("last poll {0}s ago"),
                 (DateTime.UtcNow - _lastPollUtc).TotalSeconds.ToString("F0", CultureInfo.InvariantCulture));
 
-        return string.Format(tr("{0} sensor(s) from {1} hwmon chip(s) — NVML: {2} — {3}"),
-            sensors.Count, _hwmon.ChipCount, _nvml.Status, age);
+        StringBuilder text = new(string.Format(tr("{0} sensor(s) from {1} hwmon chip(s) — NVML: {2} — {3}"),
+            sensors.Count, _hwmon.ChipCount, _nvml.Status, age));
+
+        if (_lastPollUtc != default && _hwmon.Problem is { } problem)
+            text.Append('\n').Append(problem.Translate(tr));
+
+        foreach (SensorDiagnostic? error in (SensorDiagnostic?[])[_lastError, _nvml.LastError])
+        {
+            if (error is not null)
+                text.Append('\n').Append(string.Format(tr("Last error: {0}"), error.Translate(tr)));
+        }
+
+        return text.ToString();
     }
 
     public void Dispose() => Stop();
+}
+
+/// <summary>A status message of the sensor sources: an English format string and its arguments,
+/// translated by the plugin when shown.</summary>
+internal sealed record SensorDiagnostic(string Format, object[] Args)
+{
+    public string Translate(Func<string, string> tr) => string.Format(CultureInfo.InvariantCulture, tr(Format), Args);
 }

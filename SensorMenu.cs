@@ -7,7 +7,7 @@ namespace LoupixDeck.Plugin.LinuxHwInfo;
 
 /// <summary>
 /// Builds the <c>LinuxHwInfo.Sensor</c> part of the editor menu: sensors are sorted by component
-/// (CPU, GPU, Memory, Storage, Mainboard, Network, Other) and then by quantity (Temperature, Load,
+/// (CPU, GPU, Memory, Storage, Mainboard, Network, Battery, Other) and then by quantity (Temperature, Load,
 /// Clock, …), and every entry gets a name that is unique within its submenu.
 ///
 /// <para>Only the presentation is new. Each entry still stores the sensor's stable id, exactly as
@@ -17,12 +17,14 @@ namespace LoupixDeck.Plugin.LinuxHwInfo;
 /// </summary>
 internal static partial class SensorMenu
 {
-    private static readonly string[] ComponentOrder = ["CPU", "GPU", "Memory", "Storage", "Mainboard", "Network", "Other"];
+    private static readonly string[] ComponentOrder =
+        ["CPU", "GPU", "Memory", "Storage", "Mainboard", "Network", "Battery", "Other"];
 
     /// <summary>Quantities in menu order. "Fans" is the mainboard's plural of "Fan".</summary>
     private static readonly string[] SectionOrder =
     [
-        "Temperature", "Load", "Clock", "Memory", "Video memory", "Fan", "Fans", "Power", "Voltage", "Current", "Transfer rate", "Other"
+        "Temperature", "Load", "Clock", "Memory", "Video memory", "Fan", "Fans", "Power", "Voltage", "Current", "Transfer rate",
+        "Charge", "Other"
     ];
 
     /// <summary>Words that repeat the component and are dropped from the labels ("CPU Total"
@@ -125,7 +127,8 @@ internal static partial class SensorMenu
     private static string Component(LinuxHwInfoSensor sensor) => sensor.Category switch
     {
         Categories.Motherboard => "Mainboard",
-        Categories.Cpu or Categories.Gpu or Categories.Memory or Categories.Storage or Categories.Network => sensor.Category,
+        Categories.Cpu or Categories.Gpu or Categories.Memory or Categories.Storage or Categories.Network
+            or Categories.Battery => sensor.Category,
         _ => "Other"
     };
 
@@ -142,6 +145,7 @@ internal static partial class SensorMenu
         {
             LinuxHwInfoReadingType.Temperature => "Temperature",
             LinuxHwInfoReadingType.Usage when sensor.Category == Categories.Memory => "Memory",
+            LinuxHwInfoReadingType.Usage when sensor.Category == Categories.Battery => "Charge",
             LinuxHwInfoReadingType.Usage => "Load",
             LinuxHwInfoReadingType.Clock => "Clock",
             LinuxHwInfoReadingType.Data => "Memory",

@@ -31,4 +31,7 @@ internal static class SensorId
 
     /// <summary>e.g. <c>disk/nvme0n1/read</c>.</summary>
     public static string Disk(string device, string field) => $"disk/{device}/{field}";
+
+    /// <summary>e.g. <c>battery/BAT0/capacity</c>.</summary>
+    public static string Battery(string supply, string field) => $"battery/{supply}/{field}";
 }

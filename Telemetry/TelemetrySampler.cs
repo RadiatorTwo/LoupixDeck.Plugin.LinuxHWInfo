@@ -1,11 +1,12 @@
+using System.Collections.Concurrent;
 using LoupixDeck.Plugin.LinuxHwInfo.Sensors;
 using LoupixDeck.PluginSdk;
 
 namespace LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
 
 /// <summary>
-/// Turns every sensor snapshot into a <see cref="TelemetryFrame"/>: every sensor and every
-/// <see cref="PageMetrics"/> metric gets a 72-sample history (one chart column per poll), clock
+/// Turns every sensor snapshot into a <see cref="TelemetryFrame"/>: every <see cref="PageMetrics"/>
+/// metric, and every sensor a tile has asked for, gets a 72-sample history (one chart column per poll), clock
 /// and load readings are smoothed with an EMA (α 0.4) so noise doesn't read as motion, and alert
 /// states are evaluated with hysteresis. Runs on the service's poll thread, off the host's render
 /// lock; render calls only read the latest published frame.
@@ -14,7 +15,8 @@ namespace LoupixDeck.Plugin.LinuxHwInfo.Telemetry;
 /// Sampling follows the poll instead of a timer of its own: rates are deltas between two polls,
 /// so a faster sampler would only repeat the same value and flatten the chart into steps.
 /// </remarks>
-internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> tjMax, IPluginLogger? logger = null)
+internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<TelemetrySettings> readSettings,
+    IPluginLogger? logger = null)
     : IDisposable
 {
     /// <summary>Samples kept per metric — the width of the design's 72-px chart.</summary>
@@ -23,7 +25,16 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
     private const double EmaAlpha = 0.4;
 
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, Track> _tracks = [];
+    private readonly Dictionary<string, Track> _tracks = new(StringComparer.Ordinal);
+
+    // Metric keys a tile has asked for (TelemetryFrame.Get); written by render threads.
+    private readonly ConcurrentDictionary<string, byte> _requested = new(StringComparer.Ordinal);
+
+    // Reused on every sample, which runs under _gate.
+    private readonly List<(string Key, double Value, MetricInfo Info, LinuxHwInfoSensor? Sensor)> _inputs = [];
+    private readonly HashSet<string> _companions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _gpuTemperatures = new(StringComparer.Ordinal);
+    private readonly List<string> _gone = [];
     private volatile TelemetryFrame _frame = TelemetryFrame.Unavailable;
     private bool _started;
     private string? _networkInterface;
@@ -87,11 +98,39 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         }
 
         IReadOnlyList<LinuxHwInfoSensor> sensors = service.Sensors;
-        double tj = tjMax();
+        TelemetrySettings settings = readSettings();
+        double tj = settings.TjMax;
 
-        List<(string Key, double Value, MetricInfo Info, LinuxHwInfoSensor? Sensor)> inputs = [];
+        // Single sensors only once a tile has asked for them; the page metrics always, since the
+        // pages and the fan rules read them.
+        FillGpuTemperatures(sensors);
+        _inputs.Clear();
+        _companions.Clear();
         foreach (LinuxHwInfoSensor sensor in sensors)
-            inputs.Add((MetricKeys.ForSensor(sensor), SensorMetrics.NativeValue(sensor), SensorMetrics.Describe(sensor, tj), sensor));
+        {
+            string key = MetricKeys.ForSensor(sensor);
+            if (!_requested.ContainsKey(key))
+                continue;
+
+            MetricInfo info = SensorMetrics.Describe(sensor, tj);
+            _inputs.Add((key, SensorMetrics.NativeValue(sensor), info, sensor));
+
+            // A card's fan watches that card's temperature, so it is tracked too.
+            if (info.Threshold == ThresholdKind.GpuFanStall
+                && _gpuTemperatures.TryGetValue(SensorMetrics.DeviceKey(sensor), out string? temperature)
+                && !_requested.ContainsKey(temperature))
+                _companions.Add(temperature);
+        }
+
+        if (_companions.Count > 0)
+        {
+            foreach (LinuxHwInfoSensor sensor in sensors)
+            {
+                string key = MetricKeys.ForSensor(sensor);
+                if (_companions.Remove(key))
+                    _inputs.Add((key, SensorMetrics.NativeValue(sensor), SensorMetrics.Describe(sensor, tj), sensor));
+            }
+        }
 
         string? networkInterface = NetworkRoutes.Preferred(PageMetrics.Interfaces(sensors));
         if (networkInterface != _networkInterface)
@@ -107,79 +146,95 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
         foreach (PageMetrics.Definition definition in PageMetrics.All)
         {
             if (definition.Read(context) is { } reading)
-                inputs.Add((definition.Id, reading.Value, reading.Info, null));
+                _inputs.Add((definition.Id, reading.Value, reading.Info, null));
         }
 
-        Dictionary<string, string> gpuTemperatures = GpuTemperatures(sensors);
-
         // Fan rules read the temperature state they watch, so temperatures go first.
-        Dictionary<string, MetricSnapshot> metrics = [];
-        foreach ((string key, double value, MetricInfo info, LinuxHwInfoSensor? sensor) in
-                 inputs.OrderBy(i => IsFanRule(i.Info.Threshold)))
+        Dictionary<string, MetricSnapshot> metrics = new(_inputs.Count, StringComparer.Ordinal);
+        foreach ((string key, double value, MetricInfo info, LinuxHwInfoSensor? sensor) in _inputs)
         {
-            if (!_tracks.TryGetValue(key, out Track? track))
-                _tracks[key] = track = new Track();
+            if (!IsFanRule(info.Threshold))
+                Update(key, value, info, sensor, settings, metrics);
+        }
 
-            double smoothed = info.Smooth && !double.IsNaN(track.Last)
-                ? track.Last + (EmaAlpha * (value - track.Last))
-                : value;
-            track.Push(smoothed);
-
-            MetricState companion = info.Threshold switch
-            {
-                ThresholdKind.CpuFanStall => metrics.GetValueOrDefault(PageMetrics.CpuTemp)?.State ?? MetricState.Ok,
-                // A card's own fan watches that card's temperature; the page's fan the page's GPU.
-                ThresholdKind.GpuFanStall => metrics.GetValueOrDefault(
-                    sensor is not null && gpuTemperatures.TryGetValue(SensorMetrics.DeviceKey(sensor), out string? temperature)
-                        ? temperature
-                        : PageMetrics.GpuTemp)?.State ?? MetricState.Ok,
-                _ => MetricState.Ok
-            };
-            track.State = Thresholds.Evaluate(info.Threshold, smoothed, tj, track.State, companion);
-
-            double[] history = track.ToArray();
-            double max = info.GrowToPeak ? Math.Max(info.Max, Peak(history)) : info.Max;
-            metrics[key] = new MetricSnapshot(smoothed, track.State, history, info.Min, max,
-                Thresholds.LimitsFor(info.Threshold, tj)?.Warn, info.Format, info.Unit);
+        foreach ((string key, double value, MetricInfo info, LinuxHwInfoSensor? sensor) in _inputs)
+        {
+            if (IsFanRule(info.Threshold))
+                Update(key, value, info, sensor, settings, metrics);
         }
 
         // A metric that vanished (device unplugged, interface down) keeps a gap in its chart and is
         // dropped once its whole history has scrolled out.
-        foreach ((string key, Track track) in _tracks.ToArray())
+        _gone.Clear();
+        foreach ((string key, Track track) in _tracks)
         {
             if (metrics.ContainsKey(key))
                 continue;
 
             track.Push(double.NaN);
             if (++track.Missing >= HistoryLength)
-                _tracks.Remove(key);
+                _gone.Add(key);
         }
 
-        return new TelemetryFrame(true, sensors, metrics);
+        foreach (string key in _gone)
+            _tracks.Remove(key);
+
+        return new TelemetryFrame(true, sensors, metrics, _requested);
+    }
+
+    private void Update(string key, double value, MetricInfo info, LinuxHwInfoSensor? sensor,
+        TelemetrySettings settings, Dictionary<string, MetricSnapshot> metrics)
+    {
+        if (!_tracks.TryGetValue(key, out Track? track))
+            _tracks[key] = track = new Track();
+
+        double smoothed = info.Smooth && !double.IsNaN(track.Last)
+            ? track.Last + (EmaAlpha * (value - track.Last))
+            : value;
+        track.Push(smoothed);
+
+        MetricState companion = info.Threshold switch
+        {
+            ThresholdKind.CpuFanStall => metrics.GetValueOrDefault(PageMetrics.CpuTemp)?.State ?? MetricState.Ok,
+            // A card's own fan watches that card's temperature; the page's fan the page's GPU.
+            ThresholdKind.GpuFanStall => metrics.GetValueOrDefault(
+                sensor is not null && _gpuTemperatures.TryGetValue(SensorMetrics.DeviceKey(sensor), out string? temperature)
+                    ? temperature
+                    : PageMetrics.GpuTemp)?.State ?? MetricState.Ok,
+            _ => MetricState.Ok
+        };
+        track.State = Thresholds.Evaluate(info.Threshold, smoothed, settings, track.State, companion);
+
+        ReadOnlyMemory<double> history = track.History();
+        double max = info.GrowToPeak ? Math.Max(info.Max, Peak(history.Span)) : info.Max;
+        // Only the text changes with the unit; value, history, bar and limits stay in °C.
+        MetricFormat format = settings.Fahrenheit && info.Format == MetricFormat.Temperature
+            ? MetricFormat.TemperatureFahrenheit
+            : info.Format;
+        metrics[key] = new MetricSnapshot(smoothed, track.State, history, info.Min, max,
+            Thresholds.LimitsFor(info.Threshold, settings)?.Warn, format, info.Unit);
     }
 
     /// <summary>Per GPU (by <see cref="SensorMetrics.DeviceKey"/>) the id of its core temperature,
     /// or of its first temperature when it reports no core reading.</summary>
-    private static Dictionary<string, string> GpuTemperatures(IReadOnlyList<LinuxHwInfoSensor> sensors)
+    private void FillGpuTemperatures(IReadOnlyList<LinuxHwInfoSensor> sensors)
     {
-        Dictionary<string, string> temperatures = [];
+        _gpuTemperatures.Clear();
         foreach (LinuxHwInfoSensor sensor in sensors)
         {
             if (sensor.Category != Categories.Gpu || sensor.Type != LinuxHwInfoReadingType.Temperature)
                 continue;
 
             string device = SensorMetrics.DeviceKey(sensor);
-            if (SensorMetrics.IsGpuCoreTemperature(sensor) || !temperatures.ContainsKey(device))
-                temperatures[device] = sensor.Id;
+            if (SensorMetrics.IsGpuCoreTemperature(sensor) || !_gpuTemperatures.ContainsKey(device))
+                _gpuTemperatures[device] = sensor.Id;
         }
-
-        return temperatures;
     }
 
     private static bool IsFanRule(ThresholdKind kind) =>
         kind is ThresholdKind.CpuFanStall or ThresholdKind.GpuFanStall;
 
-    private static double Peak(double[] history)
+    private static double Peak(ReadOnlySpan<double> history)
     {
         double peak = double.MinValue;
         foreach (double value in history)
@@ -195,6 +250,12 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
     private sealed class Track
     {
         private readonly double[] _samples = new double[HistoryLength];
+
+        // The history handed to a frame, oldest to newest. Two buffers taken in turn: a frame's
+        // buffer is rewritten only two samples later, long after every render has moved on to a
+        // newer frame, so no sample allocates and no render reads a buffer being written.
+        private readonly double[][] _views = [new double[HistoryLength], new double[HistoryLength]];
+        private int _view;
         private int _count;
         private int _next;
 
@@ -214,14 +275,15 @@ internal sealed class TelemetrySampler(LinuxHwInfoService service, Func<double> 
                 Missing = 0;
         }
 
-        public double[] ToArray()
+        public ReadOnlyMemory<double> History()
         {
-            double[] result = new double[_count];
+            _view ^= 1;
+            double[] result = _views[_view];
             int start = (_next - _count + HistoryLength) % HistoryLength;
             for (int i = 0; i < _count; i++)
                 result[i] = _samples[(start + i) % HistoryLength];
 
-            return result;
+            return result.AsMemory(0, _count);
         }
     }
 }
